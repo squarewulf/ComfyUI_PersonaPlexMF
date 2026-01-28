@@ -1,0 +1,23 @@
+# ComfyUI_PersonaPlexMF Dependencies
+# Install with: pip install -r requirements.txt
+
+# Core dependencies
+torch>=2.2.0
+numpy>=1.26,<2.2
+einops>=0.7,<0.9
+
+# Model loading
+safetensors>=0.4.0
+huggingface-hub>=0.24
+
+# Audio processing
+sphn>=0.1.4
+
+# Text tokenization
+sentencepiece>=0.2
+
+# Server dependencies
+aiohttp>=3.9
+
+# CPU offload support (optional, for low VRAM)
+accelerate>=0.26.0
