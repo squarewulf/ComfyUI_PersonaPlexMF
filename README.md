@@ -14,15 +14,15 @@ A ComfyUI custom node for running [NVIDIA PersonaPlex](https://github.com/NVIDIA
 
 ## Screenshots
 
-### PersonaPlex Settings Node
-Configure all sampling, temperature, and timing parameters in one place.
-
-![PersonaPlex Settings](images/Settings-Node.png)
-
 ### PersonaPlex Conversation Server Node
 Start the live conversation server with model selection and options.
 
 ![PersonaPlex Conversation Server](images/Server-Node.png)
+
+### PersonaPlex Settings Node (Optional)
+Configure all sampling, temperature, and timing parameters in one place.
+
+![PersonaPlex Settings](images/Settings-Node.png)
 
 ### Web UI - Live Conversation
 Real-time voice conversation with customizable personas and voice selection.
