@@ -536,7 +536,10 @@ class PersonaPlexConversationServer:
                 pass
             PersonaPlexConversationServer._server_process = None
         
-        static_dir = os.path.join(PERSONAPLEX_MODELS_DIR, "dist")
+        # Look for dist in node folder first, then models folder
+        static_dir = os.path.join(os.path.dirname(__file__), "dist")
+        if not os.path.exists(static_dir):
+            static_dir = os.path.join(PERSONAPLEX_MODELS_DIR, "dist")
         
         cmd = [
             sys.executable, "-m", "moshi.server",

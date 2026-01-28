@@ -40,9 +40,7 @@ Download from [HuggingFace nvidia/personaplex-7b-v1](https://huggingface.co/nvid
 | `tokenizer_spm_32k_3.model` | Text tokenizer |
 | `voices.tgz` | Voice presets (auto-extracted) |
 
-### 4. Download Web UI (for Live Conversation)
-
-Copy the `dist/` folder from the PersonaPlex client build to `ComfyUI/models/personaplex/dist/`
+The web UI for live conversation is included in this repo (no separate download needed).
 
 ## Nodes
 
@@ -172,7 +170,6 @@ pip install sphn sentencepiece aiohttp
 **Server won't start**
 - Check ComfyUI console for error messages
 - Ensure all model files are in `ComfyUI/models/personaplex/`
-- Ensure `dist/` folder exists for the web UI
 
 ## License
 
