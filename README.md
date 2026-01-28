@@ -12,6 +12,23 @@ A ComfyUI custom node for running [NVIDIA PersonaPlex](https://github.com/NVIDIA
 - **Persona Control** — Customize AI behavior with text prompts
 - **Full Settings Control** — Adjust sampling, temperature, and timing parameters
 
+## Screenshots
+
+### PersonaPlex Settings Node
+Configure all sampling, temperature, and timing parameters in one place.
+
+![PersonaPlex Settings](images/Settings-Node.png)
+
+### PersonaPlex Conversation Server Node
+Start the live conversation server with model selection and options.
+
+![PersonaPlex Conversation Server](images/Server-Node.png)
+
+### Web UI - Live Conversation
+Real-time voice conversation with customizable personas and voice selection.
+
+![Web UI](images/Web-UI.png)
+
 ## Installation
 
 ### 1. Clone or Download
