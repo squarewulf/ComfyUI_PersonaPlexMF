@@ -2,6 +2,7 @@ import os
 import sys
 import json
 import tarfile
+import atexit
 from pathlib import Path
 from typing import Optional, List
 
@@ -9,6 +10,8 @@ import numpy as np
 import torch
 import folder_paths
 from comfy.utils import ProgressBar
+
+__version__ = "1.1.0"
 
 PERSONAPLEX_SRC = os.path.join(os.path.dirname(__file__), "personaplex_src", "moshi")
 if PERSONAPLEX_SRC not in sys.path:
@@ -439,9 +442,28 @@ class PersonaPlexInference:
         return (output_audio, text_output)
 
 
+def _cleanup_server():
+    """Cleanup server process on exit."""
+    if PersonaPlexConversationServer._server_process is not None:
+        try:
+            print("[PersonaPlex] Shutting down conversation server...")
+            PersonaPlexConversationServer._server_process.terminate()
+            PersonaPlexConversationServer._server_process.wait(timeout=5)
+        except Exception as e:
+            print(f"[PersonaPlex] Error during cleanup: {e}")
+        PersonaPlexConversationServer._server_process = None
+
+atexit.register(_cleanup_server)
+
+
 class PersonaPlexConversationServer:
     _server_process = None
     _server_url = None
+    
+    @classmethod
+    def cleanup(cls):
+        """Stop the running server."""
+        _cleanup_server()
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -540,9 +562,11 @@ class PersonaPlexConversationServer:
         static_dir = os.path.join(os.path.dirname(__file__), "dist")
         if not os.path.exists(static_dir):
             static_dir = os.path.join(PERSONAPLEX_MODELS_DIR, "dist")
+        if not os.path.exists(static_dir):
+            static_dir = None
         
-        cmd = [
-            sys.executable, "-m", "moshi.server",
+        # Build server arguments
+        server_args = [
             "--moshi-weight", moshi_path,
             "--mimi-weight", mimi_path,
             "--tokenizer", tokenizer_path,
@@ -550,25 +574,44 @@ class PersonaPlexConversationServer:
             "--port", str(port),
             "--device", device,
             "--host", host,
-            "--static", static_dir,
         ]
+        if static_dir:
+            server_args.extend(["--static", static_dir])
         
         if cpu_offload:
-            cmd.append("--cpu-offload")
+            server_args.append("--cpu-offload")
         
         if use_ssl:
-            cmd.extend(["--ssl", "mkcert"])
+            server_args.extend(["--ssl", "mkcert"])
         
         if gradio_tunnel:
-            cmd.append("--gradio-tunnel")
+            server_args.append("--gradio-tunnel")
+        
+        # Use -c to force our moshi path before any installed version
+        # This ensures the bundled PersonaPlex moshi is used, not upstream Kyutai moshi
+        # We insert our path first and invalidate any cached moshi imports
+        bootstrap_code = f'''
+import sys
+sys.path.insert(0, r"{PERSONAPLEX_SRC}")
+# Invalidate any cached moshi module so our version loads first
+for key in list(sys.modules.keys()):
+    if key == "moshi" or key.startswith("moshi."):
+        del sys.modules[key]
+sys.argv = ["moshi.server"] + {server_args!r}
+import runpy
+runpy.run_module("moshi.server", run_name="__main__", alter_sys=True)
+'''
+        cmd = [sys.executable, "-c", bootstrap_code]
         
         env = os.environ.copy()
+        # Put bundled moshi FIRST in PYTHONPATH to ensure it's found before any installed version
         env["PYTHONPATH"] = PERSONAPLEX_SRC + os.pathsep + env.get("PYTHONPATH", "")
         env["NO_TORCH_COMPILE"] = "1"
         
         print(f"[PersonaPlex] Starting conversation server on port {port}...")
         print(f"[PersonaPlex] Model path: {moshi_path}")
-        print(f"[PersonaPlex] Command: {' '.join(cmd)}")
+        print(f"[PersonaPlex] Using bundled moshi from: {PERSONAPLEX_SRC}")
+        print(f"[PersonaPlex] Server args: {' '.join(server_args)}")
         
         PersonaPlexConversationServer._server_process = subprocess.Popen(
             cmd,
@@ -580,11 +623,15 @@ class PersonaPlexConversationServer:
             universal_newlines=True,
         )
         
+        startup_output = []
+        
         def stream_output():
             proc = PersonaPlexConversationServer._server_process
             if proc and proc.stdout:
                 for line in proc.stdout:
-                    print(f"[PersonaPlex Server] {line.rstrip()}")
+                    line_text = line.rstrip()
+                    startup_output.append(line_text)
+                    print(f"[PersonaPlex Server] {line_text}")
         
         output_thread = threading.Thread(target=stream_output, daemon=True)
         output_thread.start()
@@ -594,11 +641,45 @@ class PersonaPlexConversationServer:
         PersonaPlexConversationServer._server_url = server_url
         
         print(f"[PersonaPlex] Waiting for server to start (loading models)...")
-        time.sleep(5)
         
-        proc = PersonaPlexConversationServer._server_process
-        if proc.poll() is not None:
-            raise RuntimeError(f"Server process exited with code {proc.returncode}")
+        # Poll until server is ready (up to 120 seconds for model loading)
+        import urllib.request
+        import urllib.error
+        max_wait = 120
+        poll_interval = 2
+        elapsed = 0
+        server_ready = False
+        
+        while elapsed < max_wait:
+            proc = PersonaPlexConversationServer._server_process
+            if proc.poll() is not None:
+                # Process exited - collect error output
+                time.sleep(0.5)
+                error_details = "\n".join(startup_output[-20:]) if startup_output else "No output captured"
+                raise RuntimeError(
+                    f"Server process exited with code {proc.returncode}.\n"
+                    f"Last output:\n{error_details}"
+                )
+            
+            # Try to connect to the server
+            try:
+                req = urllib.request.Request(server_url, method='HEAD')
+                urllib.request.urlopen(req, timeout=2)
+                server_ready = True
+                break
+            except (urllib.error.URLError, OSError):
+                # Server not ready yet
+                pass
+            
+            time.sleep(poll_interval)
+            elapsed += poll_interval
+            if elapsed % 10 == 0:
+                print(f"[PersonaPlex] Still loading models... ({elapsed}s)")
+        
+        if not server_ready:
+            print(f"[PersonaPlex] Warning: Server may not be fully ready after {max_wait}s")
+        else:
+            print(f"[PersonaPlex] Server is ready!")
         
         if open_browser:
             print(f"[PersonaPlex] Opening browser to {server_url}")
@@ -608,3 +689,36 @@ class PersonaPlexConversationServer:
         print("[PersonaPlex] Server output will appear in the ComfyUI console")
         
         return (server_url,)
+
+
+class PersonaPlexStopServer:
+    """Stops the running PersonaPlex conversation server."""
+    
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {},
+        }
+    
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("status",)
+    FUNCTION = "stop_server"
+    CATEGORY = "audio/PersonaPlex"
+
+    def stop_server(self):
+        if PersonaPlexConversationServer._server_process is not None:
+            try:
+                PersonaPlexConversationServer._server_process.terminate()
+                PersonaPlexConversationServer._server_process.wait(timeout=5)
+                print("[PersonaPlex] Server stopped successfully")
+                status = "Server stopped"
+            except Exception as e:
+                print(f"[PersonaPlex] Error stopping server: {e}")
+                status = f"Error: {e}"
+            PersonaPlexConversationServer._server_process = None
+            PersonaPlexConversationServer._server_url = None
+        else:
+            status = "No server running"
+            print("[PersonaPlex] No server is currently running")
+        
+        return (status,)

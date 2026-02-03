@@ -2,14 +2,17 @@ from .personaplex_nodes import (
     PersonaPlexModelLoader, 
     PersonaPlexInference, 
     PersonaPlexConversationServer, 
+    PersonaPlexStopServer,
     PersonaPlexSettings,
-    PERSONAPLEX_AVAILABLE
+    PERSONAPLEX_AVAILABLE,
+    __version__,
 )
 
 NODE_CLASS_MAPPINGS = {
     "PersonaPlexModelLoader": PersonaPlexModelLoader,
     "PersonaPlexInference": PersonaPlexInference,
     "PersonaPlexConversationServer": PersonaPlexConversationServer,
+    "PersonaPlexStopServer": PersonaPlexStopServer,
     "PersonaPlexSettings": PersonaPlexSettings,
 }
 
@@ -17,6 +20,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PersonaPlexModelLoader": "PersonaPlex Model Loader",
     "PersonaPlexInference": "PersonaPlex Inference",
     "PersonaPlexConversationServer": "PersonaPlex Conversation Server",
+    "PersonaPlexStopServer": "PersonaPlex Stop Server",
     "PersonaPlexSettings": "PersonaPlex Settings",
 }
 

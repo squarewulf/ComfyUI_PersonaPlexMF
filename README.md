@@ -3,6 +3,7 @@
 A ComfyUI custom node for running [NVIDIA PersonaPlex](https://github.com/NVIDIA/personaplex) - a real-time, full-duplex speech-to-speech conversational AI with persona control.
 
 [![GitHub](https://img.shields.io/badge/GitHub-squarewulf-blue?logo=github)](https://github.com/squarewulf/ComfyUI_PersonaPlexMF)
+[![Version](https://img.shields.io/badge/version-1.1.0-green)](https://github.com/squarewulf/ComfyUI_PersonaPlexMF)
 
 ## Features
 
@@ -11,6 +12,8 @@ A ComfyUI custom node for running [NVIDIA PersonaPlex](https://github.com/NVIDIA
 - **Voice Presets** — 18 different voice options (natural and variety styles)
 - **Persona Control** — Customize AI behavior with text prompts
 - **Full Settings Control** — Adjust sampling, temperature, and timing parameters
+- **Smart Server Startup** — Browser opens only after server is fully ready
+- **Server Cleanup** — Automatic cleanup on exit, plus manual stop node
 
 ## Screenshots
 
@@ -40,10 +43,23 @@ git clone https://github.com/squarewulf/ComfyUI_PersonaPlexMF.git
 
 ### 2. Install Dependencies
 
+**Important:** The `sphn` library must be version 0.1.x (version 0.2+ has breaking API changes).
+
 ```bash
 cd ComfyUI/custom_nodes/ComfyUI_PersonaPlexMF
+
+# Install requirements (includes pinned sphn version)
 pip install -r requirements.txt
+
+# Install bundled moshi package (required for PersonaPlex features)
 pip install -e personaplex_src/moshi
+```
+
+For **Windows portable ComfyUI**, use the embedded Python:
+```bash
+# From ComfyUI_windows_portable directory
+.\python_embeded\python.exe -m pip install -r ComfyUI\custom_nodes\ComfyUI_PersonaPlexMF\requirements.txt
+.\python_embeded\python.exe -m pip install -e ComfyUI\custom_nodes\ComfyUI_PersonaPlexMF\personaplex_src\moshi
 ```
 
 ### 3. Download Models
@@ -55,7 +71,7 @@ Download from [HuggingFace nvidia/personaplex-7b-v1](https://huggingface.co/nvid
 | `model.safetensors` | Moshi 7B LM weights (~14GB) |
 | `tokenizer-e351c8d8-checkpoint125.safetensors` | Mimi encoder/decoder |
 | `tokenizer_spm_32k_3.model` | Text tokenizer |
-| `voices.tgz` | Voice presets (auto-extracted) |
+| `voices.tgz` | Voice presets (extract to `voices/` folder) |
 
 The web UI for live conversation is included in this repo (no separate download needed).
 
@@ -74,7 +90,7 @@ Starts a WebSocket server with a web UI for live voice conversation.
 | `port` | int | Server port (default: 8998) |
 | `device` | dropdown | cuda or cpu |
 | `cpu_offload` | bool | Enable for low VRAM GPUs |
-| `open_browser` | bool | Auto-open browser |
+| `open_browser` | bool | Auto-open browser (waits for server ready) |
 | `settings` | optional | Connect PersonaPlex Settings node |
 
 **Output:** `server_url` — URL to access the conversation UI
@@ -139,6 +155,12 @@ Configure all inference parameters. Connect to Inference or Server nodes.
 | `use_ssl` | false | Enable HTTPS |
 | `gradio_tunnel` | false | Enable remote access |
 
+### PersonaPlex Stop Server
+
+Stops the running conversation server. Useful when you need to free up GPU memory or restart with different settings.
+
+**Output:** `status` — Result of the stop operation
+
 ## Voice Presets
 
 | Category | Voices |
@@ -174,19 +196,55 @@ You enjoy having a good conversation. Have a casual discussion about technology.
 
 ## Troubleshooting
 
-**"Torch not compiled with CUDA"**
+### "Torch not compiled with CUDA"
 ```bash
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu124
 ```
 
-**"No module named 'sphn'"**
+### "No module named 'sphn'" or "OpusStreamReader has no attribute 'read_pcm'"
+
+The `sphn` library version 0.2+ has breaking API changes. Install version 0.1.x:
 ```bash
-pip install sphn sentencepiece aiohttp
+pip install "sphn>=0.1.4,<0.2"
 ```
 
-**Server won't start**
+For Windows portable ComfyUI:
+```bash
+.\python_embeded\python.exe -m pip install "sphn>=0.1.4,<0.2"
+```
+
+### "unrecognized arguments: --voice-prompt-dir"
+
+A different `moshi` package is installed that conflicts with PersonaPlex. Fix by installing the bundled version:
+```bash
+cd ComfyUI/custom_nodes/ComfyUI_PersonaPlexMF
+pip install -e personaplex_src/moshi
+```
+
+### Server won't start
 - Check ComfyUI console for error messages
 - Ensure all model files are in `ComfyUI/models/personaplex/`
+- On Windows, make sure paths don't contain special characters
+
+### Port already in use
+- Change the port number in the node settings
+- Or use the "PersonaPlex Stop Server" node to stop the previous instance
+
+### WebSocket disconnects immediately
+- Check the ComfyUI console for `[PersonaPlex Server]` error messages
+- Ensure sphn version is < 0.2 (see above)
+- Wait for "Server is ready!" message before connecting
+
+## Changelog
+
+### v1.1.0
+- Fixed server startup and WebSocket connection stability
+- Browser now waits until server is fully ready
+- Pinned sphn version to < 0.2 (required for audio streaming)
+- Improved error messages and server cleanup
+
+### v1.0.0
+- Initial release
 
 ## License
 

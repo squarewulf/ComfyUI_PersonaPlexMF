@@ -11,7 +11,7 @@ safetensors>=0.4.0
 huggingface-hub>=0.24
 
 # Audio processing
-sphn>=0.1.4
+sphn>=0.1.4,<0.2  # Version 0.2+ has breaking API changes
 
 # Text tokenization
 sentencepiece>=0.2

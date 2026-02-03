@@ -168,7 +168,7 @@ class ServerState:
             else:
                 self.lm_gen.load_voice_prompt(voice_prompt_path)
         self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(request.query["text_prompt"])) if len(request.query["text_prompt"]) > 0 else None
-        seed = int(request["seed"]) if "seed" in request.query else None
+        seed = int(request.query["seed"]) if "seed" in request.query else None
 
         async def recv_loop():
             nonlocal close
@@ -471,10 +471,16 @@ def main():
     ssl_context = None
     if args.ssl is not None:
         ssl_context, protocol = create_ssl_context(args.ssl)
-    host_ip = args.host if args.host not in ("0.0.0.0", "::", "localhost") else get_lan_ip()
-    logger.info(f"Access the Web UI directly at {protocol}://{host_ip}:{args.port}")
+    # Show localhost for local access (don't expose LAN IP in logs)
+    display_host = "localhost" if args.host in ("0.0.0.0", "::", "localhost", "127.0.0.1") else args.host
+    logger.info(f"Access the Web UI directly at {protocol}://{display_host}:{args.port}")
     if setup_tunnel is not None:
-        tunnel = setup_tunnel('localhost', args.port, tunnel_token, None)
+        try:
+            # Try newer gradio API (requires share_server_tls_certificate)
+            tunnel = setup_tunnel('localhost', args.port, tunnel_token, None, None)
+        except TypeError:
+            # Fall back to older gradio API
+            tunnel = setup_tunnel('localhost', args.port, tunnel_token, None)
         logger.info(f"Tunnel started, if executing on a remote GPU, you can use {tunnel}.")
     web.run_app(app, port=args.port, ssl_context=ssl_context)
 
