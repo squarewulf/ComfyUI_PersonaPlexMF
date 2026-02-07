@@ -2,38 +2,13 @@ import os
 import sys
 import json
 import tarfile
-import atexit
-import tempfile
 from pathlib import Path
 from typing import Optional, List
 
 import numpy as np
 import torch
-from scipy.io import wavfile
 import folder_paths
-
-# Import quantization utilities (uses PyTorch native - always available)
-try:
-    from .quantize import (
-        check_quantization_available,
-        get_quantization_error,
-        get_quantization_backend,
-        quantize_model_after_load,
-        QUANTIZATION_AVAILABLE,
-        QUANTIZATION_BACKEND,
-    )
-    print(f"[PersonaPlex] Quantization available (backend: {QUANTIZATION_BACKEND})")
-except ImportError as e:
-    print(f"[PersonaPlex] Warning: Could not load quantization module: {e}")
-    QUANTIZATION_AVAILABLE = True  # PyTorch native is always available
-    QUANTIZATION_BACKEND = "pytorch_native"
-    def check_quantization_available(q): return q not in ("none", "None", None, "") and torch.cuda.is_available()
-    def get_quantization_error(): return "Quantization module not found"
-    def get_quantization_backend(): return "pytorch_native"
-    def quantize_model_after_load(m, q, d): return m.to(d)
 from comfy.utils import ProgressBar
-
-__version__ = "1.3.0"
 
 PERSONAPLEX_SRC = os.path.join(os.path.dirname(__file__), "personaplex_src", "moshi")
 if PERSONAPLEX_SRC not in sys.path:
@@ -83,6 +58,43 @@ def seed_all(seed: int):
 
 PERSONAPLEX_MODELS_DIR = os.path.join(folder_paths.models_dir, "personaplex")
 os.makedirs(PERSONAPLEX_MODELS_DIR, exist_ok=True)
+
+
+def ensure_voice_prompts(voices_dir: str, auto_download: bool):
+    if os.path.exists(voices_dir):
+        if any(name.endswith(".pt") for name in os.listdir(voices_dir)):
+            return
+
+    voices_tgz = os.path.join(PERSONAPLEX_MODELS_DIR, "voices.tgz")
+    if os.path.exists(voices_tgz):
+        print(f"[PersonaPlex] Extracting voices to {voices_dir}")
+        with tarfile.open(voices_tgz, "r:gz") as tar:
+            tar.extractall(path=PERSONAPLEX_MODELS_DIR)
+    elif auto_download:
+        try:
+            from huggingface_hub import hf_hub_download
+        except ImportError as e:
+            raise RuntimeError(
+                "huggingface-hub is required to auto-download voices. "
+                "Install it with: pip install huggingface-hub"
+            ) from e
+        try:
+            voices_tgz = hf_hub_download("nvidia/personaplex-7b-v1", "voices.tgz")
+        except Exception as e:
+            raise RuntimeError(
+                "Failed to download voices.tgz. Make sure you accepted the model "
+                "license on HuggingFace and are logged in."
+            ) from e
+        print(f"[PersonaPlex] Downloaded voices.tgz, extracting to {voices_dir}")
+        with tarfile.open(voices_tgz, "r:gz") as tar:
+            tar.extractall(path=PERSONAPLEX_MODELS_DIR)
+    else:
+        raise FileNotFoundError(
+            f"Voices not found. Place voices.tgz or voices/ folder in {PERSONAPLEX_MODELS_DIR}"
+        )
+
+    if not os.path.exists(voices_dir) or not any(name.endswith(".pt") for name in os.listdir(voices_dir)):
+        raise FileNotFoundError(f"Voice prompts not found in {voices_dir}")
 
 
 class PersonaPlexSettings:
@@ -135,27 +147,6 @@ class PersonaPlexSettings:
                     "multiline": True,
                     "tooltip": "System prompt defining the AI's persona and behavior."
                 }),
-                # Audio buffer settings (client-side, affects latency)
-                "init_buffer_ms": ("FLOAT", {
-                    "default": 400.0, "min": 50.0, "max": 1000.0, "step": 10.0,
-                    "tooltip": "Initial buffer before audio playback starts (ms). Higher = more stable, higher latency."
-                }),
-                "partial_buffer_ms": ("FLOAT", {
-                    "default": 210.0, "min": 20.0, "max": 500.0, "step": 5.0,
-                    "tooltip": "Partial buffer size (ms). Lower = less latency but may cause choppy audio."
-                }),
-                "decoder_buffer_samples": ("FLOAT", {
-                    "default": 3840.0, "min": 960.0, "max": 9600.0, "step": 240.0,
-                    "tooltip": "Decoder buffer size in samples @24kHz. Default 3840 = 160ms."
-                }),
-                "resample_quality": ("FLOAT", {
-                    "default": 5.0, "min": 0.0, "max": 10.0, "step": 1.0,
-                    "tooltip": "Resampling quality (0=fast, 10=best). Higher = better audio but more CPU."
-                }),
-                "silence_delay_s": ("FLOAT", {
-                    "default": 0.07, "min": 0.0, "max": 1.0, "step": 0.01,
-                    "tooltip": "Silence detection delay in seconds."
-                }),
                 # Server-specific settings
                 "host": ("STRING", {
                     "default": "0.0.0.0",
@@ -179,10 +170,7 @@ class PersonaPlexSettings:
     
     def create_settings(self, temp_audio, temp_text, topk_audio, topk_text, 
                         use_sampling, silence_duration, seed,
-                        voice_preset="default", text_prompt="", 
-                        init_buffer_ms=400.0, partial_buffer_ms=210.0, 
-                        decoder_buffer_samples=3840.0, resample_quality=5.0,
-                        silence_delay_s=0.07, host="0.0.0.0",
+                        voice_preset="default", text_prompt="", host="0.0.0.0",
                         use_ssl=False, gradio_tunnel=False):
         settings = {
             # Sampling
@@ -198,48 +186,12 @@ class PersonaPlexSettings:
             # Voice
             "voice_preset": voice_preset if voice_preset != "default" else "NATF2",
             "text_prompt": text_prompt,
-            # Audio buffer settings (client-side) - convert floats to ints
-            "init_buffer_ms": int(init_buffer_ms),
-            "partial_buffer_ms": int(partial_buffer_ms),
-            "decoder_buffer_samples": int(decoder_buffer_samples),
-            "resample_quality": int(resample_quality),
-            "silence_delay_s": silence_delay_s,
             # Server
             "host": host,
             "use_ssl": use_ssl,
             "gradio_tunnel": gradio_tunnel,
         }
         return (settings,)
-
-
-class PersonaPlexExternal:
-    """Configure external PersonaPlex installation for better performance."""
-    
-    @classmethod
-    def INPUT_TYPES(cls):
-        return {
-            "required": {
-                "python_path": ("STRING", {
-                    "default": "C:\\Users\\Forge\\AppData\\Local\\Programs\\Miniconda3\\python.exe",
-                    "tooltip": "Path to Python executable (e.g., Miniconda, venv)"
-                }),
-                "install_path": ("STRING", {
-                    "default": "X:\\Code\\PersonaNew\\personaplex",
-                    "tooltip": "Path to PersonaPlex installation folder"
-                }),
-            },
-        }
-    
-    RETURN_TYPES = ("PERSONAPLEX_EXTERNAL",)
-    RETURN_NAMES = ("external",)
-    FUNCTION = "create_external"
-    CATEGORY = "audio/PersonaPlex"
-    
-    def create_external(self, python_path, install_path):
-        return ({
-            "python_path": python_path.strip(),
-            "install_path": install_path.strip(),
-        },)
 
 
 class PersonaPlexModelLoader:
@@ -271,11 +223,6 @@ class PersonaPlexModelLoader:
         if not tokenizer_files:
             tokenizer_files = ["tokenizer_spm_32k_3.model"]
         
-        # Build quantize options based on availability
-        quantize_options = ["none"]
-        if QUANTIZATION_AVAILABLE:
-            quantize_options.extend(["8bit", "4bit"])
-        
         return {
             "required": {
                 "moshi_model": (model_files, {"default": model_files[0] if model_files else "model.safetensors"}),
@@ -283,10 +230,7 @@ class PersonaPlexModelLoader:
                 "tokenizer": (tokenizer_files, {"default": tokenizer_files[0] if tokenizer_files else "tokenizer_spm_32k_3.model"}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "cpu_offload": ("BOOLEAN", {"default": False}),
-                "quantize": (quantize_options, {
-                    "default": "none",
-                    "tooltip": "Quantization level: none (~14GB), 8bit (~8GB), 4bit (~5GB). Requires bitsandbytes."
-                }),
+                "auto_download_voices": ("BOOLEAN", {"default": True}),
             },
         }
     
@@ -295,7 +239,7 @@ class PersonaPlexModelLoader:
     FUNCTION = "load_model"
     CATEGORY = "audio/PersonaPlex"
 
-    def load_model(self, moshi_model, mimi_model, tokenizer, device, cpu_offload, quantize="none"):
+    def load_model(self, moshi_model, mimi_model, tokenizer, device, cpu_offload, auto_download_voices=True):
         if not PERSONAPLEX_AVAILABLE:
             raise RuntimeError(f"PersonaPlex not available: {IMPORT_ERROR}")
         
@@ -311,14 +255,7 @@ class PersonaPlexModelLoader:
             raise FileNotFoundError(f"Tokenizer not found: {tokenizer_path}")
         
         voices_dir = os.path.join(PERSONAPLEX_MODELS_DIR, "voices")
-        if not os.path.exists(voices_dir):
-            voices_tgz = os.path.join(PERSONAPLEX_MODELS_DIR, "voices.tgz")
-            if os.path.exists(voices_tgz):
-                print(f"[PersonaPlex] Extracting voices to {voices_dir}")
-                with tarfile.open(voices_tgz, "r:gz") as tar:
-                    tar.extractall(path=PERSONAPLEX_MODELS_DIR)
-            else:
-                raise FileNotFoundError(f"Voices not found. Place voices.tgz or voices/ folder in {PERSONAPLEX_MODELS_DIR}")
+        ensure_voice_prompts(voices_dir, auto_download_voices)
         
         print("[PersonaPlex] Loading Mimi encoder/decoder...")
         mimi = loaders.get_mimi(mimi_path, device)
@@ -327,28 +264,8 @@ class PersonaPlexModelLoader:
         print("[PersonaPlex] Loading tokenizer...")
         text_tokenizer = sentencepiece.SentencePieceProcessor(tokenizer_path)
         
-        # Check quantization compatibility
-        if quantize != "none" and cpu_offload:
-            print("[PersonaPlex] Warning: Quantization and CPU offload cannot be used together. Disabling CPU offload.")
-            cpu_offload = False
-        
-        if quantize != "none" and device == "cpu":
-            print("[PersonaPlex] Warning: Quantization requires CUDA. Falling back to no quantization.")
-            quantize = "none"
-        
-        if quantize != "none" and not check_quantization_available(quantize):
-            print(f"[PersonaPlex] Warning: {get_quantization_error()}")
-            print("[PersonaPlex] Falling back to no quantization.")
-            quantize = "none"
-        
         print("[PersonaPlex] Loading Moshi LM...")
-        if quantize != "none":
-            # Load to CPU first, then quantize
-            print(f"[PersonaPlex] Using {quantize} quantization to reduce VRAM usage...")
-            lm = loaders.get_moshi_lm(moshi_path, device="cpu", cpu_offload=False)
-            lm = quantize_model_after_load(lm, quantize, device)
-        else:
-            lm = loaders.get_moshi_lm(moshi_path, device=device, cpu_offload=cpu_offload)
+        lm = loaders.get_moshi_lm(moshi_path, device=device, cpu_offload=cpu_offload)
         lm.eval()
         
         model_data = {
@@ -376,9 +293,6 @@ class PersonaPlexInference:
             },
             "optional": {
                 "settings": ("PERSONAPLEX_SETTINGS",),
-                "voice_audio": ("AUDIO", {
-                    "tooltip": "Optional audio sample for zero-shot voice cloning (3-10 seconds recommended). If provided, overrides voice_preset."
-                }),
                 "voice_preset": (VOICE_PRESETS, {"default": "NATF2"}),
                 "text_prompt": ("STRING", {
                     "default": "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
@@ -412,7 +326,7 @@ class PersonaPlexInference:
         pcm = pcm.detach().cpu().numpy()[0, 0]
         return pcm
 
-    def inference(self, personaplex_model, audio, settings=None, voice_audio=None, voice_preset="NATF2", text_prompt=""):
+    def inference(self, personaplex_model, audio, settings=None, voice_preset="NATF2", text_prompt=""):
         # Extract settings from optional input or use defaults
         if settings is not None:
             temp_audio = settings.get("temp_audio", 0.8)
@@ -454,35 +368,9 @@ class PersonaPlexInference:
         
         frame_size = int(sample_rate / frame_rate)
         
-        # Handle voice cloning vs preset
-        temp_voice_path = None
-        if voice_audio is not None:
-            # Zero-shot voice cloning from audio input
-            print("[PersonaPlex] Using voice cloning from audio input...")
-            voice_waveform = voice_audio["waveform"]
-            voice_sample_rate = voice_audio["sample_rate"]
-            
-            # Convert to numpy and save as temp WAV
-            voice_np = voice_waveform.squeeze().cpu().numpy()
-            if voice_np.ndim > 1:
-                voice_np = voice_np[0]  # Take first channel if stereo
-            
-            # Create temp file for voice prompt
-            temp_voice_file = tempfile.NamedTemporaryFile(
-                suffix=".wav", delete=False
-            )
-            temp_voice_path = temp_voice_file.name
-            temp_voice_file.close()
-            
-            # Save as WAV (scipy expects int16 or float32)
-            wavfile.write(temp_voice_path, voice_sample_rate, voice_np.astype(np.float32))
-            use_preset = False
-        else:
-            # Use preset .pt file
-            voice_prompt_path = os.path.join(voices_dir, f"{voice_preset}.pt")
-            if not os.path.exists(voice_prompt_path):
-                raise FileNotFoundError(f"Voice preset not found: {voice_prompt_path}")
-            use_preset = True
+        voice_prompt_path = os.path.join(voices_dir, f"{voice_preset}.pt")
+        if not os.path.exists(voice_prompt_path):
+            raise FileNotFoundError(f"Voice preset not found: {voice_prompt_path}")
         
         lm_gen = LMGen(
             lm,
@@ -505,12 +393,7 @@ class PersonaPlexInference:
         self.warmup(mimi, other_mimi, lm_gen, device, frame_size)
         
         print("[PersonaPlex] Loading voice prompt...")
-        if use_preset:
-            lm_gen.load_voice_prompt_embeddings(voice_prompt_path)
-        else:
-            lm_gen.load_voice_prompt(temp_voice_path)
-            # Clean up temp file after loading
-            os.unlink(temp_voice_path)
+        lm_gen.load_voice_prompt_embeddings(voice_prompt_path)
         lm_gen.text_prompt_tokens = tokenizer.encode(wrap_with_system_tags(text_prompt)) if text_prompt else None
         
         mimi.reset_streaming()
@@ -527,7 +410,7 @@ class PersonaPlexInference:
         if waveform.shape[0] > 1:
             waveform = waveform.mean(dim=0, keepdim=True)
         
-        user_audio = waveform.numpy()
+        user_audio = waveform.detach().cpu().numpy()
         
         if audio_sr != sample_rate:
             user_audio = sphn.resample(user_audio, src_sample_rate=audio_sr, dst_sample_rate=sample_rate)
@@ -587,28 +470,9 @@ class PersonaPlexInference:
         return (output_audio, text_output)
 
 
-def _cleanup_server():
-    """Cleanup server process on exit."""
-    if PersonaPlexConversationServer._server_process is not None:
-        try:
-            print("[PersonaPlex] Shutting down conversation server...")
-            PersonaPlexConversationServer._server_process.terminate()
-            PersonaPlexConversationServer._server_process.wait(timeout=5)
-        except Exception as e:
-            print(f"[PersonaPlex] Error during cleanup: {e}")
-        PersonaPlexConversationServer._server_process = None
-
-atexit.register(_cleanup_server)
-
-
 class PersonaPlexConversationServer:
     _server_process = None
     _server_url = None
-    
-    @classmethod
-    def cleanup(cls):
-        """Stop the running server."""
-        _cleanup_server()
     
     @classmethod
     def INPUT_TYPES(cls):
@@ -636,11 +500,6 @@ class PersonaPlexConversationServer:
         if not tokenizer_files:
             tokenizer_files = ["tokenizer_spm_32k_3.model"]
         
-        # Build quantize options based on availability
-        quantize_options = ["none"]
-        if QUANTIZATION_AVAILABLE:
-            quantize_options.extend(["8bit", "4bit"])
-        
         return {
             "required": {
                 "moshi_model": (model_files, {"default": model_files[0]}),
@@ -649,19 +508,11 @@ class PersonaPlexConversationServer:
                 "port": ("INT", {"default": 8998, "min": 1024, "max": 65535}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "cpu_offload": ("BOOLEAN", {"default": False}),
-                "quantize": (quantize_options, {
-                    "default": "none",
-                    "tooltip": "Quantization level: none (~14GB), 8bit (~8GB), 4bit (~5GB). Requires bitsandbytes."
-                }),
-                "attention": (["auto", "sage", "sdpa"], {
-                    "default": "auto",
-                    "tooltip": "Attention backend: auto (use SageAttention if available), sage (force SageAttention), sdpa (PyTorch native)"
-                }),
                 "open_browser": ("BOOLEAN", {"default": True}),
+                "auto_download_voices": ("BOOLEAN", {"default": True}),
             },
             "optional": {
                 "settings": ("PERSONAPLEX_SETTINGS",),
-                "external": ("PERSONAPLEX_EXTERNAL",),
             },
         }
     
@@ -670,7 +521,7 @@ class PersonaPlexConversationServer:
     FUNCTION = "start_server"
     CATEGORY = "audio/PersonaPlex"
 
-    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, quantize, attention, open_browser, settings=None, external=None):
+    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, open_browser, auto_download_voices, settings=None):
         if not PERSONAPLEX_AVAILABLE:
             raise RuntimeError(f"PersonaPlex not available: {IMPORT_ERROR}")
         
@@ -684,46 +535,12 @@ class PersonaPlexConversationServer:
         use_ssl = False
         gradio_tunnel = False
         seed = -1
-        # Sampling settings
-        temp_audio = 0.8
-        temp_text = 0.7
-        topk_audio = 250
-        topk_text = 25
-        use_sampling = True
-        # Voice and prompt defaults for web UI
-        default_voice = "NATF0.pt"
-        default_text_prompt = "You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way."
-        # Audio buffer defaults (client-side)
-        init_buffer_ms = 400
-        partial_buffer_ms = 210
-        decoder_buffer_samples = 3840
-        resample_quality = 5
-        silence_delay_s = 0.07
         
         if settings is not None:
             host = settings.get("host", "0.0.0.0")
             use_ssl = settings.get("use_ssl", False)
             gradio_tunnel = settings.get("gradio_tunnel", False)
             seed = settings.get("seed", -1)
-            # Sampling settings from Settings node
-            temp_audio = settings.get("temp_audio", 0.8)
-            temp_text = settings.get("temp_text", 0.7)
-            topk_audio = settings.get("topk_audio", 250)
-            topk_text = settings.get("topk_text", 25)
-            use_sampling = settings.get("use_sampling", True)
-            # Voice and text prompt defaults for web UI
-            voice_preset = settings.get("voice_preset", "NATF2")
-            if voice_preset and voice_preset != "default":
-                default_voice = f"{voice_preset}.pt" if not voice_preset.endswith(".pt") else voice_preset
-            text_prompt = settings.get("text_prompt", "")
-            if text_prompt:
-                default_text_prompt = text_prompt
-            # Audio buffer settings (client-side)
-            init_buffer_ms = settings.get("init_buffer_ms", 400)
-            partial_buffer_ms = settings.get("partial_buffer_ms", 210)
-            decoder_buffer_samples = settings.get("decoder_buffer_samples", 3840)
-            resample_quality = settings.get("resample_quality", 5)
-            silence_delay_s = settings.get("silence_delay_s", 0.07)
         
         moshi_path = os.path.join(PERSONAPLEX_MODELS_DIR, moshi_model)
         mimi_path = os.path.join(PERSONAPLEX_MODELS_DIR, mimi_model)
@@ -734,14 +551,7 @@ class PersonaPlexConversationServer:
             if not os.path.exists(path):
                 raise FileNotFoundError(f"{name} not found: {path}")
         
-        if not os.path.exists(voices_dir):
-            voices_tgz = os.path.join(PERSONAPLEX_MODELS_DIR, "voices.tgz")
-            if os.path.exists(voices_tgz):
-                print(f"[PersonaPlex] Extracting voices to {voices_dir}")
-                with tarfile.open(voices_tgz, "r:gz") as tar:
-                    tar.extractall(path=PERSONAPLEX_MODELS_DIR)
-            else:
-                raise FileNotFoundError(f"Voices not found: {voices_dir} or {voices_tgz}")
+        ensure_voice_prompts(voices_dir, auto_download_voices)
         
         if PersonaPlexConversationServer._server_process is not None:
             try:
@@ -751,12 +561,19 @@ class PersonaPlexConversationServer:
                 pass
             PersonaPlexConversationServer._server_process = None
         
-        # Look for dist in node folder first, then models folder
-        static_dir = os.path.join(os.path.dirname(__file__), "dist")
+        # Look for dist in: client build output, then node folder, then models folder
+        static_dir = os.path.join(os.path.dirname(__file__), "personaplex_src", "client", "dist")
+        if not os.path.exists(static_dir):
+            static_dir = os.path.join(os.path.dirname(__file__), "dist")
         if not os.path.exists(static_dir):
             static_dir = os.path.join(PERSONAPLEX_MODELS_DIR, "dist")
         if not os.path.exists(static_dir):
             static_dir = None
+        
+        if static_dir:
+            print(f"[PersonaPlex] Serving UI from: {static_dir}")
+        else:
+            print("[PersonaPlex] WARNING: No local dist found! Server will download default UI from HuggingFace.")
         
         # Build server arguments
         server_args = [
@@ -774,214 +591,57 @@ class PersonaPlexConversationServer:
         if cpu_offload:
             server_args.append("--cpu-offload")
         
-        # Sampling settings
-        server_args.extend([
-            "--temp-audio", str(temp_audio),
-            "--temp-text", str(temp_text),
-            "--topk-audio", str(topk_audio),
-            "--topk-text", str(topk_text),
-        ])
-        if not use_sampling:
-            server_args.append("--no-sampling")
-        
-        # Default voice and text prompt for web UI
-        server_args.extend([
-            "--default-voice", default_voice,
-            "--default-text-prompt", default_text_prompt,
-        ])
-        
-        # Audio buffer settings (client-side)
-        server_args.extend([
-            "--init-buffer-ms", str(int(init_buffer_ms)),
-            "--partial-buffer-ms", str(int(partial_buffer_ms)),
-            "--decoder-buffer-samples", str(int(decoder_buffer_samples)),
-            "--resample-quality", str(int(resample_quality)),
-            "--silence-delay-s", str(silence_delay_s),
-        ])
-        
         if use_ssl:
             server_args.extend(["--ssl", "mkcert"])
         
         if gradio_tunnel:
             server_args.append("--gradio-tunnel")
         
-        # Determine which installation to use
-        use_external = external is not None
-        external_python = external.get("python_path", "") if external else ""
-        external_path = external.get("install_path", "") if external else ""
-        
-        if use_external and external_python and external_path:
-            # Use external PersonaPlex installation (like standalone)
-            external_path = external_path.strip()
-            external_python = external_python.strip()
-            
-            if not os.path.exists(external_python):
-                raise FileNotFoundError(f"External Python not found: {external_python}")
-            if not os.path.exists(external_path):
-                raise FileNotFoundError(f"External PersonaPlex path not found: {external_path}")
-            
-            # Build simpler server args for external installation
-            # Use the external installation's models and static files
-            ext_models_dir = os.path.join(external_path, "models")
-            ext_voices_dir = os.path.join(ext_models_dir, "voices")
-            ext_static_dir = os.path.join(external_path, "client", "dist")
-            
-            # Use external paths for models if they exist, otherwise use our models
-            if os.path.exists(ext_models_dir):
-                ext_moshi = os.path.join(ext_models_dir, moshi_model)
-                ext_mimi = os.path.join(ext_models_dir, mimi_model) 
-                ext_tokenizer = os.path.join(ext_models_dir, tokenizer)
-                # Fall back to our models if external doesn't have them
-                if os.path.exists(ext_moshi):
-                    moshi_path = ext_moshi
-                if os.path.exists(ext_mimi):
-                    mimi_path = ext_mimi
-                if os.path.exists(ext_tokenizer):
-                    tokenizer_path = ext_tokenizer
-                if os.path.exists(ext_voices_dir):
-                    voices_dir = ext_voices_dir
-            
-            # Rebuild server args with potentially updated paths
-            server_args = [
-                "--moshi-weight", moshi_path,
-                "--mimi-weight", mimi_path,
-                "--tokenizer", tokenizer_path,
-                "--voice-prompt-dir", voices_dir,
-                "--port", str(port),
-                "--device", device,
-                "--host", host,
-            ]
-            
-            # Use external static if available, otherwise ours
-            if os.path.exists(ext_static_dir):
-                server_args.extend(["--static", ext_static_dir])
-            elif static_dir:
-                server_args.extend(["--static", static_dir])
-            
-            if cpu_offload:
-                server_args.append("--cpu-offload")
-            
-            if use_ssl:
-                # Use the same SSL path as standalone
-                ssl_cache = os.path.expanduser("~/.cache/personaplex-ssl")
-                server_args.extend(["--ssl", ssl_cache])
-            
-            if gradio_tunnel:
-                server_args.append("--gradio-tunnel")
-            
-            # Simple run_server.py style command - matches standalone behavior exactly
-            run_server_path = os.path.join(external_path, "run_server.py")
-            if os.path.exists(run_server_path):
-                # Use the external run_server.py directly
-                cmd = [external_python, run_server_path] + server_args[6:]  # Skip model args, let it use defaults
-                # Actually, pass all args to override
-                cmd = [external_python, run_server_path, 
-                       "--moshi-weight", moshi_path,
-                       "--mimi-weight", mimi_path,
-                       "--tokenizer", tokenizer_path,
-                       "--voice-prompt-dir", voices_dir,
-                       "--port", str(port),
-                       "--host", host]
-                if use_ssl:
-                    cmd.extend(["--ssl", ssl_cache])
-            else:
-                # Fall back to running moshi.server directly
-                ext_moshi_src = os.path.join(external_path, "moshi")
-                cmd = [external_python, "-m", "moshi.server"] + server_args
-            
-            env = os.environ.copy()
-            # Set PYTHONPATH to external moshi
-            ext_moshi_src = os.path.join(external_path, "moshi")
-            env["PYTHONPATH"] = ext_moshi_src + os.pathsep + env.get("PYTHONPATH", "")
-            # Match standalone: disable torch.compile
-            env["NO_TORCH_COMPILE"] = "1"
-            
-            print(f"[PersonaPlex] Using EXTERNAL installation: {external_path}")
-            print(f"[PersonaPlex] Using EXTERNAL Python: {external_python}")
-            working_dir = external_path
-        else:
-            # Use bundled PersonaPlex installation
-            # Use -c to force our moshi path before any installed version
-            bootstrap_code = f'''
+        # Create a wrapper script that forces our bundled moshi to load
+        # This is needed because Windows embedded Python ignores PYTHONPATH in some cases
+        # IMPORTANT: sys.argv must be set BEFORE importing moshi.server because
+        # the module calls main() at import time via: with torch.no_grad(): main()
+        wrapper_code = f'''
 import sys
-sys.path.insert(0, r"{PERSONAPLEX_SRC}")
-# Invalidate any cached moshi module so our version loads first
+# Set argv FIRST - server.py calls main() at module level during import
+sys.argv = ["server.py"] + {server_args!r}
+# Remove any cached moshi imports
 for key in list(sys.modules.keys()):
     if key == "moshi" or key.startswith("moshi."):
         del sys.modules[key]
-sys.argv = ["moshi.server"] + {server_args!r}
-import runpy
-runpy.run_module("moshi.server", run_name="__main__", alter_sys=True)
+# Force our bundled path to be first
+sys.path.insert(0, r"{PERSONAPLEX_SRC}")
+# Import triggers main() automatically via module-level code
+import moshi.server
 '''
-            cmd = [sys.executable, "-c", bootstrap_code]
-            
-            env = os.environ.copy()
-            # Put bundled moshi FIRST in PYTHONPATH to ensure it's found before any installed version
-            env["PYTHONPATH"] = PERSONAPLEX_SRC + os.pathsep + env.get("PYTHONPATH", "")
-            
-            # Match standalone behavior: disable torch.compile (PyTorch has dataclass bugs that cause issues)
-            env["NO_TORCH_COMPILE"] = "1"
-            env.pop("NO_CUDA_GRAPH", None)     # CUDA graphs are still useful
-            env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"  # Better memory allocation
-            
-            working_dir = PERSONAPLEX_SRC
         
-        # Set attention backend (for bundled version)
-        if attention == "sdpa":
-            env["MOSHI_NO_SAGE_ATTENTION"] = "1"  # Force SDPA
-            env["MOSHI_ATTENTION"] = "sdpa"
-        elif attention == "sage":
-            env.pop("MOSHI_NO_SAGE_ATTENTION", None)  # Allow SageAttention
-            env["MOSHI_ATTENTION"] = "sage"
-        else:  # auto
-            env.pop("MOSHI_NO_SAGE_ATTENTION", None)  # Allow SageAttention if available
-            env["MOSHI_ATTENTION"] = "auto"
+        cmd = [sys.executable, "-c", wrapper_code]
+        
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
+        env["NO_TORCH_COMPILE"] = "1"
         
         print(f"[PersonaPlex] Starting conversation server on port {port}...")
         print(f"[PersonaPlex] Model path: {moshi_path}")
-        if use_external:
-            print(f"[PersonaPlex] Mode: EXTERNAL installation")
-        else:
-            print(f"[PersonaPlex] Mode: Bundled (from {PERSONAPLEX_SRC})")
-            print(f"[PersonaPlex] Attention backend: {attention}")
-        print(f"[PersonaPlex] Command: {' '.join(cmd[:3])}...")  # Show first part of command
-        
-        # Log GPU memory state before starting subprocess
-        try:
-            import torch
-            if torch.cuda.is_available():
-                for i in range(torch.cuda.device_count()):
-                    allocated = torch.cuda.memory_allocated(i) / 1024**3
-                    reserved = torch.cuda.memory_reserved(i) / 1024**3
-                    total = torch.cuda.get_device_properties(i).total_memory / 1024**3
-                    print(f"[PersonaPlex] GPU {i}: {allocated:.1f}GB allocated, {reserved:.1f}GB reserved, {total:.1f}GB total")
-        except Exception as e:
-            print(f"[PersonaPlex] Could not get GPU memory info: {e}")
-        
-        # Use unbuffered output to reduce latency
-        env["PYTHONUNBUFFERED"] = "1"
+        print(f"[PersonaPlex] Static dir: {static_dir}")
+        print(f"[PersonaPlex] Using bundled moshi from: {PERSONAPLEX_SRC}")
+        print(f"[PersonaPlex] Server args: {' '.join(server_args)}")
         
         PersonaPlexConversationServer._server_process = subprocess.Popen(
             cmd,
             env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
-            cwd=working_dir,
-            bufsize=0,  # Unbuffered
+            cwd=PERSONAPLEX_SRC,
+            bufsize=1,
+            universal_newlines=True,
         )
-        
-        startup_output = []
         
         def stream_output():
             proc = PersonaPlexConversationServer._server_process
             if proc and proc.stdout:
-                import io
-                # Use raw binary reading with immediate decoding for lower latency
-                reader = io.TextIOWrapper(proc.stdout, encoding='utf-8', errors='replace', line_buffering=False)
-                for line in reader:
-                    line_text = line.rstrip()
-                    startup_output.append(line_text)
-                    print(f"[PersonaPlex Server] {line_text}")
+                for line in proc.stdout:
+                    print(f"[PersonaPlex Server] {line.rstrip()}")
         
         output_thread = threading.Thread(target=stream_output, daemon=True)
         output_thread.start()
@@ -990,85 +650,124 @@ runpy.run_module("moshi.server", run_name="__main__", alter_sys=True)
         server_url = f"{protocol}://localhost:{port}"
         PersonaPlexConversationServer._server_url = server_url
         
-        print(f"[PersonaPlex] Waiting for server to start (loading models)...")
+        print(f"[PersonaPlex] Waiting for server to be ready (loading models, warming up)...")
         
-        # Poll until server is ready (up to 120 seconds for model loading)
+        # Poll the server until it responds, instead of a fixed sleep.
+        # The server loads models, extracts voices, warms up, then starts listening.
         import urllib.request
-        import urllib.error
-        max_wait = 120
-        poll_interval = 2
-        elapsed = 0
+        import ssl
+        
+        max_wait = 600  # 10 minutes max (models can be large)
+        poll_interval = 3  # seconds between checks
+        waited = 0
         server_ready = False
         
-        while elapsed < max_wait:
+        while waited < max_wait:
             proc = PersonaPlexConversationServer._server_process
             if proc.poll() is not None:
-                # Process exited - collect error output
-                time.sleep(0.5)
-                error_details = "\n".join(startup_output[-20:]) if startup_output else "No output captured"
                 raise RuntimeError(
-                    f"Server process exited with code {proc.returncode}.\n"
-                    f"Last output:\n{error_details}"
+                    f"Server process exited with code {proc.returncode}. "
+                    f"Check the ComfyUI console for error details."
                 )
             
-            # Try to connect to the server
             try:
-                req = urllib.request.Request(server_url, method='HEAD')
-                urllib.request.urlopen(req, timeout=2)
-                server_ready = True
-                break
-            except (urllib.error.URLError, OSError):
-                # Server not ready yet
-                pass
+                ctx = None
+                if use_ssl:
+                    ctx = ssl.create_default_context()
+                    ctx.check_hostname = False
+                    ctx.verify_mode = ssl.CERT_NONE
+                req = urllib.request.Request(server_url, method='GET')
+                resp = urllib.request.urlopen(req, timeout=2, context=ctx)
+                if resp.status == 200:
+                    server_ready = True
+                    break
+            except Exception:
+                pass  # Server not ready yet
             
             time.sleep(poll_interval)
-            elapsed += poll_interval
-            if elapsed % 10 == 0:
-                print(f"[PersonaPlex] Still loading models... ({elapsed}s)")
+            waited += poll_interval
+            if waited % 15 == 0:
+                print(f"[PersonaPlex] Still waiting for server... ({waited}s elapsed)")
         
         if not server_ready:
-            print(f"[PersonaPlex] Warning: Server may not be fully ready after {max_wait}s")
+            proc = PersonaPlexConversationServer._server_process
+            if proc.poll() is not None:
+                raise RuntimeError(
+                    f"Server process exited with code {proc.returncode} during startup."
+                )
+            else:
+                print(f"[PersonaPlex] Warning: Server did not respond within {max_wait}s, but process is still running. Opening anyway.")
         else:
-            print(f"[PersonaPlex] Server is ready!")
+            print(f"[PersonaPlex] Server is ready! (took ~{waited}s)")
         
         if open_browser:
             print(f"[PersonaPlex] Opening browser to {server_url}")
             webbrowser.open(server_url)
         
-        print(f"[PersonaPlex] Conversation server started at {server_url}")
+        print(f"[PersonaPlex] Conversation server running at {server_url}")
         print("[PersonaPlex] Server output will appear in the ComfyUI console")
         
         return (server_url,)
 
 
-class PersonaPlexStopServer:
-    """Stops the running PersonaPlex conversation server."""
+class PersonaPlexServerURL:
+    """Node that receives a PersonaPlex server URL and can display/open it."""
     
     @classmethod
     def INPUT_TYPES(cls):
         return {
-            "required": {},
+            "required": {
+                "server_url": ("STRING", {"forceInput": True}),
+            },
+            "optional": {
+                "open_browser": ("BOOLEAN", {"default": False}),
+            }
         }
     
     RETURN_TYPES = ("STRING",)
-    RETURN_NAMES = ("status",)
-    FUNCTION = "stop_server"
-    CATEGORY = "audio/PersonaPlex"
-
-    def stop_server(self):
-        if PersonaPlexConversationServer._server_process is not None:
-            try:
-                PersonaPlexConversationServer._server_process.terminate()
-                PersonaPlexConversationServer._server_process.wait(timeout=5)
-                print("[PersonaPlex] Server stopped successfully")
-                status = "Server stopped"
-            except Exception as e:
-                print(f"[PersonaPlex] Error stopping server: {e}")
-                status = f"Error: {e}"
-            PersonaPlexConversationServer._server_process = None
-            PersonaPlexConversationServer._server_url = None
-        else:
-            status = "No server running"
-            print("[PersonaPlex] No server is currently running")
+    RETURN_NAMES = ("url",)
+    FUNCTION = "process_url"
+    CATEGORY = "PersonaPlex"
+    OUTPUT_NODE = True
+    
+    def process_url(self, server_url: str, open_browser: bool = False):
+        print(f"[PersonaPlex] Server URL: {server_url}")
         
-        return (status,)
+        if open_browser:
+            import webbrowser
+            import urllib.request
+            import ssl
+            import time
+            
+            # Wait for the server to actually be ready before opening the browser
+            print(f"[PersonaPlex] Checking if server is ready at {server_url}...")
+            max_wait = 300
+            poll_interval = 3
+            waited = 0
+            ready = False
+            
+            while waited < max_wait:
+                try:
+                    ctx = None
+                    if server_url.startswith("https"):
+                        ctx = ssl.create_default_context()
+                        ctx.check_hostname = False
+                        ctx.verify_mode = ssl.CERT_NONE
+                    req = urllib.request.Request(server_url, method='GET')
+                    resp = urllib.request.urlopen(req, timeout=2, context=ctx)
+                    if resp.status == 200:
+                        ready = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(poll_interval)
+                waited += poll_interval
+            
+            if ready:
+                print(f"[PersonaPlex] Server ready, opening browser to {server_url}")
+            else:
+                print(f"[PersonaPlex] Server not confirmed ready after {max_wait}s, opening browser anyway")
+            
+            webbrowser.open(server_url)
+        
+        return {"ui": {"text": [server_url]}, "result": (server_url,)}

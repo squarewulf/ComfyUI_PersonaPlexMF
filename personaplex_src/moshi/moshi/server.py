@@ -27,6 +27,7 @@
 import argparse
 import asyncio
 from dataclasses import dataclass
+import json
 import random
 import os
 from pathlib import Path
@@ -96,9 +97,7 @@ class ServerState:
 
     def __init__(self, mimi: MimiModel, other_mimi: MimiModel, text_tokenizer: sentencepiece.SentencePieceProcessor,
                  lm: LMModel, device: str | torch.device, voice_prompt_dir: str | None = None,
-                 save_voice_prompt_embeddings: bool = False,
-                 use_sampling: bool = True, temp_audio: float = 0.8, temp_text: float = 0.7,
-                 topk_audio: int = 250, topk_text: int = 25):
+                 save_voice_prompt_embeddings: bool = False):
         self.mimi = mimi
         self.other_mimi = other_mimi
         self.text_tokenizer = text_tokenizer
@@ -111,11 +110,6 @@ class ServerState:
                             device=device,
                             frame_rate=self.mimi.frame_rate,
                             save_voice_prompt_embeddings=save_voice_prompt_embeddings,
-                            use_sampling=use_sampling,
-                            temp=temp_audio,
-                            temp_text=temp_text,
-                            top_k=topk_audio,
-                            top_k_text=topk_text,
         )
         
         self.lock = asyncio.Lock()
@@ -147,10 +141,30 @@ class ServerState:
         peer_port = request.transport.get_extra_info("peername")[1]  # Port
         clog.log("info", f"Incoming connection from {peer}:{peer_port}")
 
-        # self.lm_gen.temp = float(request.query["audio_temperature"])
-        # self.lm_gen.temp_text = float(request.query["text_temperature"])
-        # self.lm_gen.top_k_text = max(1, int(request.query["text_topk"]))
-        # self.lm_gen.top_k = max(1, int(request.query["audio_topk"]))
+        def _get_float(name: str, default: float) -> float:
+            value = request.query.get(name)
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except ValueError:
+                clog.log("warning", f"Invalid {name} value: {value}")
+                return default
+
+        def _get_int(name: str, default: int) -> int:
+            value = request.query.get(name)
+            if value is None:
+                return default
+            try:
+                return int(value)
+            except ValueError:
+                clog.log("warning", f"Invalid {name} value: {value}")
+                return default
+
+        self.lm_gen.temp = _get_float("audio_temperature", self.lm_gen.temp)
+        self.lm_gen.temp_text = _get_float("text_temperature", self.lm_gen.temp_text)
+        self.lm_gen.top_k_text = max(1, _get_int("text_topk", self.lm_gen.top_k_text))
+        self.lm_gen.top_k = max(1, _get_int("audio_topk", self.lm_gen.top_k))
         
         # Construct full voice prompt path
         requested_voice_prompt_path = None
@@ -175,7 +189,17 @@ class ServerState:
             else:
                 self.lm_gen.load_voice_prompt(voice_prompt_path)
         self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(request.query["text_prompt"])) if len(request.query["text_prompt"]) > 0 else None
-        seed = int(request.query["seed"]) if "seed" in request.query else None
+        seed_value = (
+            request.query.get("seed")
+            or request.query.get("text_seed")
+            or request.query.get("audio_seed")
+        )
+        seed = None
+        if seed_value is not None:
+            try:
+                seed = int(seed_value)
+            except ValueError:
+                clog.log("warning", f"Invalid seed value: {seed_value}")
 
         async def recv_loop():
             nonlocal close
@@ -209,10 +233,15 @@ class ServerState:
                 clog.log("info", "connection closed")
 
         async def opus_loop():
+            # This loop matches the original NVIDIA PersonaPlex implementation.
+            # The model requires continuous, uninterrupted audio input to maintain
+            # coherent streaming codec state. We do NOT drop/flush input frames.
             all_pcm_data = None
-            # Max buffer: 1 second of audio at sample_rate (prevents latency climbing)
-            max_buffer_samples = self.mimi.sample_rate
-            last_drop_log = 0
+
+            # Diagnostic timing
+            frame_count = 0
+            loop_start = None
+            last_timing_log = 0
 
             while True:
                 if close:
@@ -225,18 +254,7 @@ class ServerState:
                     all_pcm_data = pcm
                 else:
                     all_pcm_data = np.concatenate((all_pcm_data, pcm))
-                
-                # Drop old audio if buffer exceeds max (prevents latency climbing)
-                if all_pcm_data.shape[-1] > max_buffer_samples:
-                    excess = all_pcm_data.shape[-1] - self.frame_size  # Keep one frame
-                    all_pcm_data = all_pcm_data[excess:]
-                    now = time.time()
-                    if now - last_drop_log > 5:  # Log at most every 5 seconds
-                        clog.log("warning", f"Dropping {excess / self.mimi.sample_rate:.1f}s of audio to prevent latency buildup")
-                        last_drop_log = now
-                
                 while all_pcm_data.shape[-1] >= self.frame_size:
-                    be = time.time()
                     chunk = all_pcm_data[: self.frame_size]
                     all_pcm_data = all_pcm_data[self.frame_size:]
                     chunk = torch.from_numpy(chunk)
@@ -260,6 +278,31 @@ class ServerState:
                             await ws.send_bytes(msg)
                         else:
                             text_token_map = ['EPAD', 'BOS', 'EOS', 'PAD']
+
+                    frame_count += 1
+                    if loop_start is None:
+                        loop_start = time.time()
+
+                    # Periodic timing diagnostic (every 15s)
+                    now = time.time()
+                    if loop_start and now - last_timing_log > 15:
+                        elapsed = now - loop_start
+                        expected = frame_count * self.frame_size / self.mimi.sample_rate
+                        drift = elapsed - expected
+                        avg_ms = (elapsed / frame_count * 1000) if frame_count > 0 else 0
+                        budget_ms = self.frame_size / self.mimi.sample_rate * 1000
+                        buf_samples = all_pcm_data.shape[-1] if all_pcm_data is not None else 0
+                        buf_ms = buf_samples / self.mimi.sample_rate * 1000
+                        clog.log("info",
+                            f"[Timing] frames={frame_count}, "
+                            f"avg={avg_ms:.1f}ms/frame (budget={budget_ms:.1f}ms), "
+                            f"drift={drift:+.2f}s, buf={buf_ms:.0f}ms")
+                        last_timing_log = now
+
+                    # Yield to event loop between frames so send_loop
+                    # can send response audio without waiting for all
+                    # queued frames to be processed first.
+                    await asyncio.sleep(0)
 
         async def send_loop():
             while True:
@@ -307,6 +350,17 @@ class ServerState:
             if await is_alive():
                 await ws.send_bytes(b"\x00")
                 clog.log("info", "sent handshake bytes")
+                metadata = {
+                    "status": "ready",
+                    "text_temperature": self.lm_gen.temp_text,
+                    "text_topk": self.lm_gen.top_k_text,
+                    "audio_temperature": self.lm_gen.temp,
+                    "audio_topk": self.lm_gen.top_k,
+                    "voice_prompt": os.path.basename(voice_prompt_path) if voice_prompt_path else None,
+                    "model_device": str(self.device),
+                    "seed": seed,
+                }
+                await ws.send_bytes(b"\x04" + bytes(json.dumps(metadata), encoding="utf8"))
                 # Clean cancellation manager
                 tasks = [
                     asyncio.create_task(recv_loop()),
@@ -410,37 +464,6 @@ def main():
             "that contains valid key.pem and cert.pem files"
         )
     )
-    
-    # Sampling parameters
-    parser.add_argument("--temp-audio", type=float, default=0.8,
-                        help="Audio sampling temperature. Higher = more random. (default: 0.8)")
-    parser.add_argument("--temp-text", type=float, default=0.7,
-                        help="Text sampling temperature. Higher = more random. (default: 0.7)")
-    parser.add_argument("--topk-audio", type=int, default=250,
-                        help="Top-K sampling for audio tokens. (default: 250)")
-    parser.add_argument("--topk-text", type=int, default=25,
-                        help="Top-K sampling for text tokens. (default: 25)")
-    parser.add_argument("--no-sampling", action="store_true",
-                        help="Disable sampling and use greedy decoding instead.")
-    
-    # Default voice and text prompt (passed to web UI)
-    parser.add_argument("--default-voice", type=str, default="NATF0.pt",
-                        help="Default voice preset for the web UI. (default: NATF0.pt)")
-    parser.add_argument("--default-text-prompt", type=str, 
-                        default="You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
-                        help="Default text prompt for the web UI.")
-    
-    # Audio buffer settings (client-side, affects latency)
-    parser.add_argument("--init-buffer-ms", type=int, default=400,
-                        help="Initial buffer before audio playback starts (ms). Higher = more stable, higher latency.")
-    parser.add_argument("--partial-buffer-ms", type=int, default=210,
-                        help="Partial buffer size (ms). Lower = less latency but may cause choppy audio.")
-    parser.add_argument("--decoder-buffer-samples", type=int, default=3840,
-                        help="Decoder buffer size in samples @24kHz. Default 3840 = 160ms.")
-    parser.add_argument("--resample-quality", type=int, default=5,
-                        help="Resampling quality (0=fast, 10=best). Higher = better audio but more CPU.")
-    parser.add_argument("--silence-delay-s", type=float, default=0.07,
-                        help="Silence detection delay in seconds.")
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -504,48 +527,11 @@ def main():
         device=args.device,
         voice_prompt_dir=args.voice_prompt_dir,
         save_voice_prompt_embeddings=False,
-        use_sampling=not args.no_sampling,
-        temp_audio=args.temp_audio,
-        temp_text=args.temp_text,
-        topk_audio=args.topk_audio,
-        topk_text=args.topk_text,
     )
-    
-    # Log sampling settings
-    if args.no_sampling:
-        logger.info("Sampling: disabled (greedy decoding)")
-    else:
-        logger.info(f"Sampling: temp_audio={args.temp_audio}, temp_text={args.temp_text}, topk_audio={args.topk_audio}, topk_text={args.topk_text}")
-    
     logger.info("warming up the model")
     state.warmup()
-    
-    # Create defaults response for the web UI
-    defaults_config = {
-        "voicePrompt": args.default_voice,
-        "textPrompt": args.default_text_prompt,
-        "textTemperature": args.temp_text,
-        "audioTemperature": args.temp_audio,
-        "textTopk": args.topk_text,
-        "audioTopk": args.topk_audio,
-        "randomSeed": -1,
-        # Audio buffer settings (client-side)
-        "initBufferMs": args.init_buffer_ms,
-        "partialBufferMs": args.partial_buffer_ms,
-        "decoderBufferSamples": args.decoder_buffer_samples,
-        "resampleQuality": args.resample_quality,
-        "silenceDelayS": args.silence_delay_s,
-    }
-    logger.info(f"Web UI defaults: voice={args.default_voice}, temp_audio={args.temp_audio}, temp_text={args.temp_text}")
-    logger.info(f"Audio buffers: init={args.init_buffer_ms}ms, partial={args.partial_buffer_ms}ms")
-    
-    async def handle_defaults(_):
-        """Return default configuration for the web UI."""
-        return web.json_response(defaults_config)
-    
     app = web.Application()
     app.router.add_get("/api/chat", state.handle_chat)
-    app.router.add_get("/api/defaults", handle_defaults)
     if static_path is not None:
         async def handle_root(_):
             return web.FileResponse(os.path.join(static_path, "index.html"))

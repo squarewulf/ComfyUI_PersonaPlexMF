@@ -2,29 +2,25 @@ from .personaplex_nodes import (
     PersonaPlexModelLoader, 
     PersonaPlexInference, 
     PersonaPlexConversationServer, 
-    PersonaPlexStopServer,
     PersonaPlexSettings,
-    PersonaPlexExternal,
-    PERSONAPLEX_AVAILABLE,
-    __version__,
+    PersonaPlexServerURL,
+    PERSONAPLEX_AVAILABLE
 )
 
 NODE_CLASS_MAPPINGS = {
     "PersonaPlexModelLoader": PersonaPlexModelLoader,
     "PersonaPlexInference": PersonaPlexInference,
     "PersonaPlexConversationServer": PersonaPlexConversationServer,
-    "PersonaPlexStopServer": PersonaPlexStopServer,
     "PersonaPlexSettings": PersonaPlexSettings,
-    "PersonaPlexExternal": PersonaPlexExternal,
+    "PersonaPlexServerURL": PersonaPlexServerURL,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "PersonaPlexModelLoader": "PersonaPlex Model Loader",
     "PersonaPlexInference": "PersonaPlex Inference",
     "PersonaPlexConversationServer": "PersonaPlex Conversation Server",
-    "PersonaPlexStopServer": "PersonaPlex Stop Server",
     "PersonaPlexSettings": "PersonaPlex Settings",
-    "PersonaPlexExternal": "PersonaPlex External",
+    "PersonaPlexServerURL": "PersonaPlex Server URL",
 }
 
 WEB_DIRECTORY = None
