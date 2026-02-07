@@ -24,7 +24,7 @@ const COLORS = [
   "#FF5500",  // 11 (top)
 ];
 
-export const ClientVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, theme }) => {
+export const ClientVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, theme: _theme }) => {
   const [canvasWidth, setCanvasWidth] = useState(parent.current ? Math.min(parent.current.clientWidth, parent.current.clientHeight) : 0 );
   const requestRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -43,7 +43,7 @@ export const ClientVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, t
       for (let i = 1; i <= 10; i++) {
         const barY = y + height + gap + Math.min(1, width / 30)- (i * barHeight + i * gap);
         ctx.fillStyle = COLORS[i - 1];
-        ctx.strokeStyle = theme === "dark" ? "white" : "black";
+        ctx.strokeStyle = "rgba(255,255,255,0.15)";
         ctx.lineWidth = Math.min(1, height / 100);
         if(i <= volume) {
           ctx.fillRect(x, barY, width, barHeight);
@@ -73,7 +73,7 @@ export const ClientVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, t
       MAX_INTENSITY,
     );
     const volume = Math.floor((intensity * 10) / MAX_INTENSITY);
-    ctx.fillStyle = theme === "dark" ? "#000000" : "#fafafa";
+    ctx.fillStyle = "#0f0f0f";
     ctx.fillRect(x, y, width, height);
     drawBars(
       ctx,

@@ -52,13 +52,13 @@ const createWorkerWithErrorTracking = (): Worker => {
 };
 
 // Send init command to a worker, then send warmup BOS page
-const sendInitCommand = (worker: Worker, audioContextSampleRate: number): void => {
+const sendInitCommand = (worker: Worker, audioContextSampleRate: number, resampleQuality: number = 5): void => {
   worker.postMessage({
     command: "init",
     bufferLength: 960 * audioContextSampleRate / 24000,
     decoderSampleRate: 24000,
     outputBufferSampleRate: audioContextSampleRate,
-    resampleQuality: 0,
+    resampleQuality,
   });
   
   // After a short delay, send warmup BOS page to trigger decoder's internal init
@@ -78,7 +78,7 @@ let prewarmedWorkerReady: Promise<void> | null = null;
 let prewarmedSampleRate: number | null = null;
 
 // Create and pre-warm a decoder worker (should be called early, e.g., on page load)
-export const prewarmDecoderWorker = (audioContextSampleRate: number): Promise<void> => {
+export const prewarmDecoderWorker = (audioContextSampleRate: number, resampleQuality: number = 5): Promise<void> => {
   if (prewarmedWorkerReady && prewarmedSampleRate === audioContextSampleRate) {
     console.log("Using existing prewarmed worker");
     return prewarmedWorkerReady;
@@ -94,7 +94,7 @@ export const prewarmDecoderWorker = (audioContextSampleRate: number): Promise<vo
   prewarmedWorker = createWorkerWithErrorTracking();
   prewarmedSampleRate = audioContextSampleRate;
   
-  sendInitCommand(prewarmedWorker, audioContextSampleRate);
+  sendInitCommand(prewarmedWorker, audioContextSampleRate, resampleQuality);
   
   prewarmedWorkerReady = new Promise((resolve) => {
     // Give worker plenty of time to load WASM and process init
@@ -143,12 +143,12 @@ export const createDecoderWorker = (): Worker => {
 };
 
 // Initialize a decoder worker and return a promise that resolves when ready
-export const initDecoder = (worker: Worker, audioContextSampleRate: number): Promise<void> => {
+export const initDecoder = (worker: Worker, audioContextSampleRate: number, resampleQuality: number = 5): Promise<void> => {
   return new Promise((resolve) => {
     console.log("Starting decoder initialization");
     lastWorkerError = null;
     
-    sendInitCommand(worker, audioContextSampleRate);
+    sendInitCommand(worker, audioContextSampleRate, resampleQuality);
     
     // Give worker time to load WASM and process init - 1000ms to be safe
     setTimeout(() => {

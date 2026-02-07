@@ -15,13 +15,13 @@ export const ServerAudio: FC<ServerAudioProps> = ({ setGetAudioStats, theme }) =
   return (
     <>
       {hasCriticalDelay && (
-        <div className="fixed left-0 top-0 flex w-screen justify-between bg-red-500 p-2 text-center">
-          <p>A connection issue has been detected, you've been reconnected</p>
+        <div className="fixed left-0 top-0 flex w-screen justify-between items-center bg-red-500/20 border-b border-red-500/30 backdrop-blur-sm p-2.5 text-center z-50">
+          <p className="text-xs text-red-300">A connection issue has been detected, you've been reconnected</p>
           <button
             onClick={async () => {
               setHasCriticalDelay(false);
             }}
-            className="bg-white p-1 text-black"
+            className="text-xs px-3 py-1 rounded bg-white/10 hover:bg-white/20 text-white/80 transition-colors"
           >
             Dismiss
           </button>

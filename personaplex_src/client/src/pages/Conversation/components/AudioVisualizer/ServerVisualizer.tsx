@@ -11,7 +11,7 @@ type AudioVisualizerProps = {
 
 const MAX_INTENSITY = 255;
 
-export const ServerVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, theme }) => {
+export const ServerVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, theme: _theme }) => {
   const [canvasWidth, setCanvasWidth] = useState( parent.current ? Math.min(parent.current.clientWidth, parent.current.clientHeight) : 0 );
   const requestRef = useRef<number | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -32,7 +32,7 @@ export const ServerVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, t
     const radius = ((socketStatus === "connected" ? 0.3 + 0.7 * relIntensity : relIntensity) * maxCircleWidth) / 2;
     // Draw a circle with radius based on intensity
     ctx.clearRect( centerX - width /2, centerY - width/2 , width, width);
-    ctx.fillStyle = theme === "dark" ? "#000000" : "#fafafa";
+    ctx.fillStyle = "#0f0f0f";
     ctx.fillRect(centerX - width / 2, centerY - width / 2, width, width);
     ctx.beginPath();
     ctx.fillStyle = "#4E8800";
@@ -52,7 +52,7 @@ export const ServerVisualizer: FC<AudioVisualizerProps> = ({ analyser, parent, t
     //Draw a circle with max radius
     ctx.beginPath();
     ctx.arc(centerX, centerY, maxCircleWidth / 2, 0, 2 * Math.PI);
-    ctx.strokeStyle = theme === "dark" ? "white" : "black";
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
     ctx.lineWidth = width / 50;
     ctx.stroke();
     ctx.closePath();

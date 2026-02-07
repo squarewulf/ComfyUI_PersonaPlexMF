@@ -27,6 +27,7 @@
 import argparse
 import asyncio
 from dataclasses import dataclass
+import json
 import random
 import os
 from pathlib import Path
@@ -140,10 +141,30 @@ class ServerState:
         peer_port = request.transport.get_extra_info("peername")[1]  # Port
         clog.log("info", f"Incoming connection from {peer}:{peer_port}")
 
-        # self.lm_gen.temp = float(request.query["audio_temperature"])
-        # self.lm_gen.temp_text = float(request.query["text_temperature"])
-        # self.lm_gen.top_k_text = max(1, int(request.query["text_topk"]))
-        # self.lm_gen.top_k = max(1, int(request.query["audio_topk"]))
+        def _get_float(name: str, default: float) -> float:
+            value = request.query.get(name)
+            if value is None:
+                return default
+            try:
+                return float(value)
+            except ValueError:
+                clog.log("warning", f"Invalid {name} value: {value}")
+                return default
+
+        def _get_int(name: str, default: int) -> int:
+            value = request.query.get(name)
+            if value is None:
+                return default
+            try:
+                return int(value)
+            except ValueError:
+                clog.log("warning", f"Invalid {name} value: {value}")
+                return default
+
+        self.lm_gen.temp = _get_float("audio_temperature", self.lm_gen.temp)
+        self.lm_gen.temp_text = _get_float("text_temperature", self.lm_gen.temp_text)
+        self.lm_gen.top_k_text = max(1, _get_int("text_topk", self.lm_gen.top_k_text))
+        self.lm_gen.top_k = max(1, _get_int("audio_topk", self.lm_gen.top_k))
         
         # Construct full voice prompt path
         requested_voice_prompt_path = None
@@ -168,7 +189,17 @@ class ServerState:
             else:
                 self.lm_gen.load_voice_prompt(voice_prompt_path)
         self.lm_gen.text_prompt_tokens = self.text_tokenizer.encode(wrap_with_system_tags(request.query["text_prompt"])) if len(request.query["text_prompt"]) > 0 else None
-        seed = int(request["seed"]) if "seed" in request.query else None
+        seed_value = (
+            request.query.get("seed")
+            or request.query.get("text_seed")
+            or request.query.get("audio_seed")
+        )
+        seed = None
+        if seed_value is not None:
+            try:
+                seed = int(seed_value)
+            except ValueError:
+                clog.log("warning", f"Invalid seed value: {seed_value}")
 
         async def recv_loop():
             nonlocal close
@@ -202,7 +233,15 @@ class ServerState:
                 clog.log("info", "connection closed")
 
         async def opus_loop():
+            # This loop matches the original NVIDIA PersonaPlex implementation.
+            # The model requires continuous, uninterrupted audio input to maintain
+            # coherent streaming codec state. We do NOT drop/flush input frames.
             all_pcm_data = None
+
+            # Diagnostic timing
+            frame_count = 0
+            loop_start = None
+            last_timing_log = 0
 
             while True:
                 if close:
@@ -216,7 +255,6 @@ class ServerState:
                 else:
                     all_pcm_data = np.concatenate((all_pcm_data, pcm))
                 while all_pcm_data.shape[-1] >= self.frame_size:
-                    be = time.time()
                     chunk = all_pcm_data[: self.frame_size]
                     all_pcm_data = all_pcm_data[self.frame_size:]
                     chunk = torch.from_numpy(chunk)
@@ -240,6 +278,31 @@ class ServerState:
                             await ws.send_bytes(msg)
                         else:
                             text_token_map = ['EPAD', 'BOS', 'EOS', 'PAD']
+
+                    frame_count += 1
+                    if loop_start is None:
+                        loop_start = time.time()
+
+                    # Periodic timing diagnostic (every 15s)
+                    now = time.time()
+                    if loop_start and now - last_timing_log > 15:
+                        elapsed = now - loop_start
+                        expected = frame_count * self.frame_size / self.mimi.sample_rate
+                        drift = elapsed - expected
+                        avg_ms = (elapsed / frame_count * 1000) if frame_count > 0 else 0
+                        budget_ms = self.frame_size / self.mimi.sample_rate * 1000
+                        buf_samples = all_pcm_data.shape[-1] if all_pcm_data is not None else 0
+                        buf_ms = buf_samples / self.mimi.sample_rate * 1000
+                        clog.log("info",
+                            f"[Timing] frames={frame_count}, "
+                            f"avg={avg_ms:.1f}ms/frame (budget={budget_ms:.1f}ms), "
+                            f"drift={drift:+.2f}s, buf={buf_ms:.0f}ms")
+                        last_timing_log = now
+
+                    # Yield to event loop between frames so send_loop
+                    # can send response audio without waiting for all
+                    # queued frames to be processed first.
+                    await asyncio.sleep(0)
 
         async def send_loop():
             while True:
@@ -287,6 +350,17 @@ class ServerState:
             if await is_alive():
                 await ws.send_bytes(b"\x00")
                 clog.log("info", "sent handshake bytes")
+                metadata = {
+                    "status": "ready",
+                    "text_temperature": self.lm_gen.temp_text,
+                    "text_topk": self.lm_gen.top_k_text,
+                    "audio_temperature": self.lm_gen.temp,
+                    "audio_topk": self.lm_gen.top_k,
+                    "voice_prompt": os.path.basename(voice_prompt_path) if voice_prompt_path else None,
+                    "model_device": str(self.device),
+                    "seed": seed,
+                }
+                await ws.send_bytes(b"\x04" + bytes(json.dumps(metadata), encoding="utf8"))
                 # Clean cancellation manager
                 tasks = [
                     asyncio.create_task(recv_loop()),

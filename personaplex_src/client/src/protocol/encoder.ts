@@ -29,6 +29,8 @@ export const encodeMessage = (message: WSMessage): Uint8Array => {
       return new Uint8Array([0x05, ...new TextEncoder().encode(message.data)]);
     case "ping":
       return new Uint8Array([0x06]);
+    case "flush":
+      return new Uint8Array([0x07]);
   }
 };
 
@@ -80,6 +82,10 @@ export const decodeMessage = (data: Uint8Array): WSMessage => {
     case 0x06:
       return {
         type: "ping",
+      }
+    case 0x07:
+      return {
+        type: "flush",
       }
     default: {
       console.log(type);

@@ -44,7 +44,7 @@ const getAudioMimeType = () => {
   }
   if (MediaRecorder.isTypeSupported("audio/mpeg")) {
     return "audio/mpeg";
-  }``
+  }
   if (MediaRecorder.isTypeSupported("audio/mp4")) {
     return "audio/mp4";
   }

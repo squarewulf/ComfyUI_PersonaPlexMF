@@ -1,5 +1,5 @@
 import { FC, RefObject, useState } from "react";
-import { useModelParams } from "../../hooks/useModelParams";
+import { useModelParams, DEFAULT_INIT_BUFFER_MS, DEFAULT_PARTIAL_BUFFER_MS, DEFAULT_MAX_BUFFER_MS, DEFAULT_BUFFER_INCREMENT_MS, DEFAULT_MAX_PARTIAL_CAP_MS, DEFAULT_MAX_BUFFER_CAP_MS, DEFAULT_MAX_LATENCY_MS, DEFAULT_AUTO_FLUSH, DEFAULT_FLUSH_SILENCE_FRAMES, DEFAULT_RESAMPLE_QUALITY } from "../../hooks/useModelParams";
 import { Button } from "../../../../components/Button/Button";
 
 type ModelParamsProps = {
@@ -14,6 +14,16 @@ export const ModelParams:FC<ModelParamsProps> = ({
   padMult,
   repetitionPenalty,
   repetitionPenaltyContext,
+  initBufferMs,
+  partialBufferMs,
+  maxBufferMs,
+  bufferIncrementMs,
+  maxPartialCapMs,
+  maxBufferCapMs,
+  maxLatencyMs,
+  autoFlush,
+  flushSilenceFrames,
+  resampleQuality,
   setParams,
   resetParams,
   isConnected,
@@ -25,46 +35,24 @@ export const ModelParams:FC<ModelParamsProps> = ({
   const [modalVoicePrompt, setModalVoicePrompt] = useState<string>(voicePrompt);
   const [modalTextPrompt, setModalTextPrompt] = useState<string>(textPrompt);
   return (
-    <div className=" p-2 mt-6 self-center flex flex-col items-center text-center">
-        <table>
-          <tbody>
-            <tr>
-              <td>Text Prompt:</td>
-              <td className="w-12 text-center">{modalTextPrompt}</td>
-              <td className="p-2"><input className="align-middle bg-white text-black border border-gray-300 rounded px-2 py-1" disabled={isConnected} type="text" id="text-prompt" name="text-prompt" value={modalTextPrompt} onChange={e => setModalTextPrompt(e.target.value)} /></td>
-            </tr>
-            <tr>
-              <td>Voice Prompt:</td>
-              <td className="w-12 text-center">{modalVoicePrompt}</td>
-              <td className="p-2">
-                <select className="align-middle bg-white text-black border border-gray-300 rounded px-2 py-1" disabled={isConnected} id="voice-prompt" name="voice-prompt" value={modalVoicePrompt} onChange={e => setModalVoicePrompt(e.target.value)}>
-                  <option value="NATF0.pt">NATF0.pt</option>
-                  <option value="NATF1.pt">NATF1.pt</option>
-                  <option value="NATF2.pt">NATF2.pt</option>
-                  <option value="NATF3.pt">NATF3.pt</option>
-                  <option value="NATM0.pt">NATM0.pt</option>
-                  <option value="NATM1.pt">NATM1.pt</option>
-                  <option value="NATM2.pt">NATM2.pt</option>
-                  <option value="NATM3.pt">NATM3.pt</option>
-                  <option value="VARF0.pt">VARF0.pt</option>
-                  <option value="VARF1.pt">VARF1.pt</option>
-                  <option value="VARF2.pt">VARF2.pt</option>
-                  <option value="VARF3.pt">VARF3.pt</option>
-                  <option value="VARF4.pt">VARF4.pt</option>
-                  <option value="VARM0.pt">VARM0.pt</option>
-                  <option value="VARM1.pt">VARM1.pt</option>
-                  <option value="VARM2.pt">VARM2.pt</option>
-                  <option value="VARM3.pt">VARM3.pt</option>
-                  <option value="VARM4.pt">VARM4.pt</option>
-                </select>
-              </td>
-            </tr>
-          </tbody>
-        </table>
-        <div>
-          <Button onClick={resetParams} className="m-2">Reset</Button>
-          <Button onClick={() => {
-            console.log("Validating params");
+    <div className="p-4 mt-4 self-center flex flex-col items-center text-center glass-card max-w-md w-full">
+        <div className="space-y-3 w-full">
+          <div>
+            <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider block text-left mb-1">Text Prompt</label>
+            <input className="pp-input w-full px-3 py-1.5 text-sm" disabled={isConnected} type="text" value={modalTextPrompt} onChange={e => setModalTextPrompt(e.target.value)} />
+          </div>
+          <div>
+            <label className="text-[11px] font-medium text-white/50 uppercase tracking-wider block text-left mb-1">Voice</label>
+            <select className="pp-input w-full px-3 py-1.5 text-sm" disabled={isConnected} value={modalVoicePrompt} onChange={e => setModalVoicePrompt(e.target.value)}>
+              {["NATF0","NATF1","NATF2","NATF3","NATM0","NATM1","NATM2","NATM3","VARF0","VARF1","VARF2","VARF3","VARF4","VARM0","VARM1","VARM2","VARM3","VARM4"].map(v => (
+                <option key={v} value={`${v}.pt`}>{v}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <div className="flex gap-2 mt-4">
+          <Button variant="ghost" onClick={resetParams}>Reset</Button>
+          <Button variant="primary" onClick={() => {
             setParams({
             textTemperature,
             textTopk,
@@ -76,9 +64,19 @@ export const ModelParams:FC<ModelParamsProps> = ({
             textPrompt: modalTextPrompt,
             voicePrompt: modalVoicePrompt,
             randomSeed,
+            initBufferMs: initBufferMs ?? DEFAULT_INIT_BUFFER_MS,
+            partialBufferMs: partialBufferMs ?? DEFAULT_PARTIAL_BUFFER_MS,
+            maxBufferMs: maxBufferMs ?? DEFAULT_MAX_BUFFER_MS,
+            bufferIncrementMs: bufferIncrementMs ?? DEFAULT_BUFFER_INCREMENT_MS,
+            maxPartialCapMs: maxPartialCapMs ?? DEFAULT_MAX_PARTIAL_CAP_MS,
+            maxBufferCapMs: maxBufferCapMs ?? DEFAULT_MAX_BUFFER_CAP_MS,
+            maxLatencyMs: maxLatencyMs ?? DEFAULT_MAX_LATENCY_MS,
+            autoFlush: autoFlush ?? DEFAULT_AUTO_FLUSH,
+            flushSilenceFrames: flushSilenceFrames ?? DEFAULT_FLUSH_SILENCE_FRAMES,
+            resampleQuality: resampleQuality ?? DEFAULT_RESAMPLE_QUALITY,
           });
           modal?.current?.close()
-        }} className="m-2">Validate</Button>
+        }}>Apply</Button>
         </div>
     </div>
   )

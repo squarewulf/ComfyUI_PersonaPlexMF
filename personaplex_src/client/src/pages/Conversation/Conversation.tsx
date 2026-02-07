@@ -29,6 +29,15 @@ type ConversationProps = {
 } & Partial<ModelParamsValues>;
 
 
+const resolveWorkerAddr = (workerAddr: string) => {
+  if (workerAddr == "same" || workerAddr == "") {
+    const newWorkerAddr = window.location.hostname + ":" + window.location.port;
+    console.log("Overriding workerAddr to", newWorkerAddr);
+    return newWorkerAddr;
+  }
+  return workerAddr;
+};
+
 const buildURL = ({
   workerAddr,
   params,
@@ -36,6 +45,7 @@ const buildURL = ({
   email,
   textSeed,
   audioSeed,
+  seed,
 }: {
   workerAddr: string;
   params: ModelParamsValues;
@@ -43,17 +53,10 @@ const buildURL = ({
   email?: string;
   textSeed: number;
   audioSeed: number;
+  seed: number;
 }) => {
-  const newWorkerAddr = useMemo(() => {
-    if (workerAddr == "same" || workerAddr == "") {
-      const newWorkerAddr = window.location.hostname + ":" + window.location.port;
-      console.log("Overriding workerAddr to", newWorkerAddr);
-      return newWorkerAddr;
-    }
-    return workerAddr;
-  }, [workerAddr]);
   const wsProtocol = (window.location.protocol === 'https:') ? 'wss' : 'ws';
-  const url = new URL(`${wsProtocol}://${newWorkerAddr}/api/chat`);
+  const url = new URL(`${wsProtocol}://${workerAddr}/api/chat`);
   if(workerAuthId) {
     url.searchParams.append("worker_auth_id", workerAuthId);
   }
@@ -67,10 +70,13 @@ const buildURL = ({
   url.searchParams.append("pad_mult", params.padMult.toString());
   url.searchParams.append("text_seed", textSeed.toString());
   url.searchParams.append("audio_seed", audioSeed.toString());
+  url.searchParams.append("seed", seed.toString());
   url.searchParams.append("repetition_penalty_context", params.repetitionPenaltyContext.toString());
   url.searchParams.append("repetition_penalty", params.repetitionPenalty.toString());
   url.searchParams.append("text_prompt", params.textPrompt.toString());
   url.searchParams.append("voice_prompt", params.voicePrompt.toString());
+  url.searchParams.append("auto_flush", params.autoFlush ? "1" : "0");
+  url.searchParams.append("flush_silence_frames", params.flushSilenceFrames.toString());
   console.log(url.toString());
   return url.toString();
 };
@@ -110,16 +116,24 @@ export const Conversation:FC<ConversationProps> = ({
   const micDuration = useRef<number>(0);
   const actualAudioPlayed = useRef<number>(0);
   const textContainerRef = useRef<HTMLDivElement>(null);
-  const textSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
-  const audioSeed = useMemo(() => Math.round(1000000 * Math.random()), []);
+  const seedValue = useMemo(() => {
+    if (modelParams.randomSeed !== undefined && modelParams.randomSeed !== -1) {
+      return modelParams.randomSeed;
+    }
+    return Math.round(1000000 * Math.random());
+  }, [modelParams.randomSeed]);
+  const textSeed = seedValue;
+  const audioSeed = seedValue;
 
+  const resolvedWorkerAddr = useMemo(() => resolveWorkerAddr(workerAddr), [workerAddr]);
   const WSURL = buildURL({
-    workerAddr,
+    workerAddr: resolvedWorkerAddr,
     params: modelParams,
     workerAuthId,
     email: email,
     textSeed: textSeed,
     audioSeed: audioSeed,
+    seed: seedValue,
   });
 
   const onDisconnect = useCallback(() => {
@@ -199,25 +213,18 @@ export const Conversation:FC<ConversationProps> = ({
   }, [isRecording, worklet, audioStreamDestination, audioRecorder, stereoMerger]);
 
   const onPressConnect = useCallback(async () => {
-      if (isOver) {
-        window.location.reload();
-      } else {
-        audioContext.current?.resume();
-        if (socketStatus !== "connected") {
-          start();
-        } else {
-          stop();
-        }
-      }
-    }, [socketStatus, isOver, start, stop]);
+      // Always reload the page - this returns to the main settings/homepage
+      // Whether disconnecting or reconnecting after a session ends
+      window.location.reload();
+    }, []);
 
   const socketColor = useMemo(() => {
     if (socketStatus === "connected") {
-      return 'bg-[#76b900]';
+      return 'bg-[#76b900] shadow-[0_0_8px_rgba(118,185,0,0.4)]';
     } else if (socketStatus === "connecting") {
-      return 'bg-orange-300';
+      return 'bg-amber-400 shadow-[0_0_8px_rgba(251,191,36,0.4)] animate-pulse';
     } else {
-      return 'bg-red-400';
+      return 'bg-red-400 shadow-[0_0_8px_rgba(248,113,113,0.4)]';
     }
   }, [socketStatus]);
 
@@ -240,16 +247,17 @@ export const Conversation:FC<ConversationProps> = ({
         socket,
       }}
     >
-    <div>
+    <div className="bg-[#0f0f0f] min-h-screen">
     <div className="main-grid h-screen max-h-screen w-screen p-4 max-w-96 md:max-w-screen-lg m-auto">
-      <div className="controls text-center flex justify-center items-center gap-2">
+      <div className="controls text-center flex justify-center items-center gap-3">
          <Button
             onClick={onPressConnect}
             disabled={socketStatus !== "connected" && !isOver}
+            variant={isOver ? 'primary' : 'secondary'}
           >
             {socketButtonMsg}
           </Button>
-          <div className={`h-4 w-4 rounded-full ${socketColor}`} />
+          <div className={`h-3 w-3 rounded-full ${socketColor} transition-all duration-300`} />
         </div>
         {audioContext.current && worklet.current && <MediaContext.Provider value={
           {
@@ -272,7 +280,7 @@ export const Conversation:FC<ConversationProps> = ({
               />
               <UserAudio theme={theme}/>
               <div className="pt-8 text-sm flex justify-center items-center flex-col download-links">
-                {audioURL && <div><a href={audioURL} download={`personaplex_audio.${getExtension("audio")}`} className="pt-2 text-center block">Download audio</a></div>}
+                {audioURL && <div><a href={audioURL} download={`personaplex_audio.${getExtension("audio")}`} className="pt-2 text-center block text-[#76b900] hover:text-[#8ad400] transition-colors underline underline-offset-2">Download audio</a></div>}
               </div>
           </div>
           <div className="scrollbar player-text" ref={textContainerRef}>

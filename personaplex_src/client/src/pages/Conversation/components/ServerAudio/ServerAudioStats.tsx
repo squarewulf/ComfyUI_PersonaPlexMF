@@ -50,28 +50,26 @@ export const ServerAudioStats = ({ getAudioStats }: ServerAudioStatsProps) => {
   }, []);
 
   return (
-    <div className="w-full rounded-lg text-zinc-500 p-2">
-      <h2 className="text-md pb-2">Server Audio Stats</h2>
-      <table>
-        <tbody>
-          <tr>
-            <td className="text-md pr-2">Audio played: </td>
-            <td>{convertMinSecs(audioStats.playedAudioDuration)}</td>
-          </tr>
-          <tr>
-            <td className="text-md pr-2">Missed audio: </td>
-            <td>{convertMinSecs(audioStats.missedAudioDuration)}</td>
-          </tr>
-          <tr>
-            <td className="text-md pr-2">Latency: </td>
-            <td>{(movingAverageSum.current / movingAverageCount.current).toFixed(3)}</td>
-          </tr>
-          <tr>
-            <td className="text-md pr-2">Min/Max buffer: </td>
-            <td>{audioStats.minPlaybackDelay.toFixed(3)} / {audioStats.maxPlaybackDelay.toFixed(3)}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div className="w-full rounded-lg p-3 glass-card">
+      <h2 className="text-xs font-semibold uppercase tracking-wider text-white/50 pb-2">Audio Stats</h2>
+      <div className="space-y-1">
+        <div className="flex justify-between text-xs">
+          <span className="text-white/40">Played</span>
+          <span className="font-mono text-white/70">{convertMinSecs(audioStats.playedAudioDuration)}</span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-white/40">Missed</span>
+          <span className="font-mono text-red-400/70">{convertMinSecs(audioStats.missedAudioDuration)}</span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-white/40">Latency</span>
+          <span className="font-mono text-[#76b900]/80">{(movingAverageSum.current / movingAverageCount.current).toFixed(3)}s</span>
+        </div>
+        <div className="flex justify-between text-xs">
+          <span className="text-white/40">Buffer</span>
+          <span className="font-mono text-white/70">{audioStats.minPlaybackDelay.toFixed(3)} / {audioStats.maxPlaybackDelay.toFixed(3)}</span>
+        </div>
+      </div>
     </div>
   );
 };

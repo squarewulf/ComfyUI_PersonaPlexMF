@@ -115,6 +115,11 @@ export const useServerAudio = ({setGetAudioStats}: useServerAudioArgs) => {
         decodeAudio(message.data);
         //For stats purposes for now
         totalAudioMessages.current++;
+      } else if (message.type === "flush") {
+        // Server detected a silence period - flush client audio buffers
+        // to reset latency to ~0. Conversation state is preserved server-side.
+        console.log("Received flush signal from server - resetting audio buffers");
+        worklet.current.port.postMessage({ type: "flush" });
       }
     },
     [decodeAudio],

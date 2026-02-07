@@ -32,9 +32,9 @@ export const AudioVisualizer: FC<AudioVisualizerProps> = ({ analyser }) => {
         canvasRef.current.width,
         canvasRef.current.height,
       );
-      gradient.addColorStop(0.2, "#2392f5");
-      gradient.addColorStop(0.5, "#fe0095");
-      gradient.addColorStop(1.0, "purple");
+      gradient.addColorStop(0.0, "#76b900");
+      gradient.addColorStop(0.5, "#5a8f00");
+      gradient.addColorStop(1.0, "#3d6200");
       ctx.fillStyle = gradient;
       ctx.fillRect(
         start,

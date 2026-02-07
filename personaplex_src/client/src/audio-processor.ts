@@ -1,185 +1,184 @@
 // @ts-nocheck
-function asMs(samples) {
-  return (samples * 1000 / sampleRate).toFixed(1);
-}
-
-function asSamples(mili) {
-  return Math.round(mili * sampleRate / 1000);
-}
+// Low-latency audio processor — based on the proven PersonaPlex approach.
+// Simple target/max latency with hard drop. No growing buffers.
 
 class MoshiProcessor extends AudioWorkletProcessor {
   constructor() {
     super();
-    console.log("Moshi processor lives", currentFrame, sampleRate);
-    console.log(currentTime);
 
-    // Buffer length definitions
-    let frameSize = asSamples(80);
-    // initialBufferSamples: we wait to have at least that many samples before starting to play
-    this.initialBufferSamples = 1 * frameSize;
-    // once we have enough samples, we further wait that long before starting to play.
-    // This allows to have buffer lengths that are not a multiple of frameSize.
-    this.partialBufferSamples = asSamples(10);
-    // If the buffer length goes over that many, we will drop the oldest packets until
-    // we reach back initialBufferSamples + partialBufferSamples.
-    this.maxBufferSamples = asSamples(10);
-    // increments
-    this.partialBufferIncrement = asSamples(5);
-    this.maxPartialWithIncrements = asSamples(80);
-    this.maxBufferSamplesIncrement = asSamples(5);
-    this.maxMaxBufferWithIncrements = asSamples(80);
+    // Target: 150ms latency, max 500ms before dropping.
+    // More generous than original to avoid "sped up" artifacts from excessive frame drops.
+    this.targetMs = 150;
+    this.maxMs = 500;
+    this.targetSamples = Math.round(this.targetMs * sampleRate / 1000);
+    this.maxSamples = Math.round(this.maxMs * sampleRate / 1000);
 
-    // State and metrics
-    this.initState();
+    this.frames = [];
+    this.offset = 0;
+    this.playing = false;
+    this.pktCount = 0;
+
+    // Stats tracking
+    this.totalPlayed = 0;
+    this.actualPlayed = 0;
+    this.timeInStream = 0;
+    this.minDelay = 9999;
+    this.maxDelay = 0;
 
     this.port.onmessage = (event) => {
-      if (event.data.type == "reset") {
-        console.log("Reset audio processor state.");
-        this.initState();
+      if (event.data.type === "reset") {
+        this.frames = [];
+        this.offset = 0;
+        this.playing = false;
+        this.pktCount = 0;
+        this.totalPlayed = 0;
+        this.actualPlayed = 0;
+        this.timeInStream = 0;
+        this.minDelay = 9999;
+        this.maxDelay = 0;
+        console.log("[AUDIO] Reset");
         return;
       }
-      let frame = event.data.frame;
-      this.frames.push(frame);
-      if (this.currentSamples() >= this.initialBufferSamples && !this.started) {
-        this.start();
-      }
-      if (this.pidx < 20) {
-        console.log(this.timestamp(), "Got packet", this.pidx++, asMs(this.currentSamples()), asMs(frame.length))
 
-      }
-      if (this.currentSamples() >= this.totalMaxBufferSamples()) {
-        console.log(this.timestamp(), "Dropping packets", asMs(this.currentSamples()), asMs(this.totalMaxBufferSamples()));
-        let target = this.initialBufferSamples + this.partialBufferSamples
-        while (this.currentSamples() > (this.initialBufferSamples + this.partialBufferSamples)) {
-          let first = this.frames[0];
-          let to_remove = this.currentSamples() - target;
-          to_remove = Math.min(first.length - this.offsetInFirstBuffer, to_remove);
-          this.offsetInFirstBuffer += to_remove;
-          this.timeInStream += to_remove / sampleRate;
-          if (this.offsetInFirstBuffer == first.length) {
-            this.frames.shift();
-            this.offsetInFirstBuffer = 0;
-          }
+      if (event.data.type === "flush") {
+        // Server-initiated flush: drop all buffered audio
+        let bufMs = this.bufMs();
+        this.frames = [];
+        this.offset = 0;
+        this.playing = false;
+        if (bufMs > 0) {
+          console.log("[AUDIO] FLUSH: dropped", bufMs, "ms");
         }
-        console.log(this.timestamp(), "Packet dropped", asMs(this.currentSamples()));
-        this.maxBufferSamples += this.maxBufferSamplesIncrement;
-        this.maxBufferSamples = Math.min(this.maxMaxBufferWithIncrements, this.maxBufferSamples);
-        console.log("Increased maxBuffer to", asMs(this.maxBufferSamples));
+        return;
       }
-      let delay = this.currentSamples() / sampleRate;
+
+      if (event.data.type === "config") {
+        const cfg = event.data;
+        if (cfg.maxLatencyMs !== undefined) {
+          this.maxMs = cfg.maxLatencyMs;
+          this.maxSamples = Math.round(this.maxMs * sampleRate / 1000);
+        }
+        if (cfg.initBufferMs !== undefined) {
+          this.targetMs = cfg.initBufferMs;
+          this.targetSamples = Math.round(this.targetMs * sampleRate / 1000);
+        }
+        console.log("[AUDIO] Config: target=" + this.targetMs + "ms, max=" + this.maxMs + "ms");
+        return;
+      }
+
+      const frame = event.data.frame;
+      const micDuration = event.data.micDuration || 0;
+      this.frames.push(frame);
+
+      if (this.pktCount < 5) {
+        console.log("[AUDIO] PKT", this.pktCount++, "buf:", this.bufMs() + "ms");
+      }
+
+      // Start playing when we have minimum buffer (half of target)
+      if (!this.playing && this.bufSize() >= this.targetSamples / 2) {
+        this.playing = true;
+        console.log("[AUDIO] PLAY started, buf:", this.bufMs() + "ms");
+      }
+
+      // Drop oldest audio if over max latency
+      if (this.bufSize() > this.maxSamples) {
+        const excess = this.bufSize() - this.targetSamples;
+        const dropped = this.drop(excess);
+        console.log("[AUDIO] DROP", Math.round(dropped * 1000 / sampleRate) + "ms, buf:", this.bufMs() + "ms");
+      }
+
+      // Calculate delay
+      const delay = micDuration - this.timeInStream;
+      if (delay > 0 && delay < 100) {
+        this.minDelay = Math.min(this.minDelay, delay);
+        this.maxDelay = Math.max(this.maxDelay, delay);
+      }
+
+      // Report stats
       this.port.postMessage({
-        totalAudioPlayed: this.totalAudioPlayed,
-        actualAudioPlayed: this.actualAudioPlayed,
-        delay: event.data.micDuration - this.timeInStream,
-        minDelay: this.minDelay,
+        totalAudioPlayed: this.totalPlayed,
+        actualAudioPlayed: this.actualPlayed,
+        delay: delay,
+        minDelay: this.minDelay === 9999 ? 0 : this.minDelay,
         maxDelay: this.maxDelay,
       });
     };
   }
 
-  initState() {
-    this.frames = new Array();
-    this.offsetInFirstBuffer = 0;
-    this.firstOut = false;
-    this.remainingPartialBufferSamples = 0;
-    this.timeInStream = 0.;
-    this.resetStart();
-
-    // Metrics
-    this.totalAudioPlayed = 0.;
-    this.actualAudioPlayed = 0.;
-    this.maxDelay = 0.;
-    this.minDelay = 2000.;
-    // Debug
-    this.pidx = 0;
-
-    // For now let's reset the buffer params.
-    this.partialBufferSamples = asSamples(10);
-    this.maxBufferSamples = asSamples(10);
+  bufSize() {
+    let size = 0;
+    for (const f of this.frames) size += f.length;
+    return size - this.offset;
   }
 
-  totalMaxBufferSamples() {
-    return this.maxBufferSamples + this.partialBufferSamples + this.initialBufferSamples;
+  bufMs() {
+    return Math.round(this.bufSize() * 1000 / sampleRate);
   }
 
-  timestamp() {
-    return Date.now() % 1000;
-  }
-
-  currentSamples() {
-    let samples = 0;
-    for (let k = 0; k < this.frames.length; k++) {
-      samples += this.frames[k].length
+  drop(count) {
+    let dropped = 0;
+    while (dropped < count && this.frames.length > 0) {
+      const first = this.frames[0];
+      const avail = first.length - this.offset;
+      const toDrop = Math.min(avail, count - dropped);
+      this.offset += toDrop;
+      this.timeInStream += toDrop / sampleRate;
+      dropped += toDrop;
+      if (this.offset >= first.length) {
+        this.frames.shift();
+        this.offset = 0;
+      }
     }
-    samples -= this.offsetInFirstBuffer;
-    return samples;
-  }
-
-  resetStart() {
-    this.started = false;
-  }
-
-  start() {
-    this.started = true;
-    this.remainingPartialBufferSamples = this.partialBufferSamples;
-    this.firstOut = true;
-  }
-
-  canPlay() {
-    return this.started && this.frames.length > 0 && this.remainingPartialBufferSamples <= 0;
+    return dropped;
   }
 
   process(inputs, outputs, parameters) {
-    let delay = this.currentSamples() / sampleRate;
-    if (this.canPlay()) {
-      this.maxDelay = Math.max(this.maxDelay, delay);
-      this.minDelay = Math.min(this.minDelay, delay);
-    }
     const output = outputs[0][0];
-    if (!this.canPlay()) {
-      if (this.actualAudioPlayed > 0) {
-        this.totalAudioPlayed += output.length / sampleRate;
+    const needed = output.length;
+
+    // Check and drop if over max every render quantum
+    if (this.bufSize() > this.maxSamples) {
+      const excess = this.bufSize() - this.targetSamples;
+      this.drop(excess);
+    }
+
+    if (!this.playing || this.frames.length === 0) {
+      output.fill(0);
+      if (this.actualPlayed > 0) {
+        this.totalPlayed += needed / sampleRate;
       }
-      this.remainingPartialBufferSamples -= output.length;
       return true;
     }
-    if (this.firstOut) {
-      console.log(this.timestamp(), "Audio resumed", asMs(this.currentSamples()), this.remainingPartialBufferSamples);
-    }
-    let first = this.frames[0];
-    let out_idx = 0;
-    while (out_idx < output.length && this.frames.length) {
-      let first = this.frames[0];
-      let to_copy = Math.min(first.length - this.offsetInFirstBuffer, output.length - out_idx);
-      output.set(first.subarray(this.offsetInFirstBuffer, this.offsetInFirstBuffer + to_copy), out_idx);
-      this.offsetInFirstBuffer += to_copy;
-      out_idx += to_copy;
-      if (this.offsetInFirstBuffer == first.length) {
-        this.offsetInFirstBuffer = 0;
+
+    let written = 0;
+    while (written < needed && this.frames.length > 0) {
+      const first = this.frames[0];
+      const avail = first.length - this.offset;
+      const toWrite = Math.min(avail, needed - written);
+
+      output.set(first.subarray(this.offset, this.offset + toWrite), written);
+      this.offset += toWrite;
+      written += toWrite;
+
+      if (this.offset >= first.length) {
         this.frames.shift();
+        this.offset = 0;
       }
     }
-    if (this.firstOut) {
-      this.firstOut = false;
-      for (let i = 0; i < out_idx; i++) {
-        output[i] *= i / out_idx;
-      }
+
+    // Buffer underrun — wait for refill
+    if (written < needed) {
+      output.fill(0, written);
+      this.playing = false;
+      console.log("[AUDIO] UNDERRUN, waiting for buffer");
     }
-    if (out_idx < output.length) {
-      console.log(this.timestamp(), "Missed some audio", output.length - out_idx);
-      this.partialBufferSamples += this.partialBufferIncrement;
-      this.partialBufferSamples = Math.min(this.partialBufferSamples, this.maxPartialWithIncrements);
-      console.log("Increased partial buffer to", asMs(this.partialBufferSamples));
-      // We ran out of a buffer, let's revert to the started state to replenish it.
-      this.resetStart();
-      for (let i = 0; i < out_idx; i++) {
-        output[i] *= (out_idx - i) / out_idx;
-      }
-    }
-    this.totalAudioPlayed += output.length / sampleRate;
-    this.actualAudioPlayed += out_idx / sampleRate;
-    this.timeInStream += out_idx / sampleRate;
+
+    this.totalPlayed += needed / sampleRate;
+    this.actualPlayed += written / sampleRate;
+    this.timeInStream += written / sampleRate;
+
     return true;
   }
 }
+
 registerProcessor("moshi-processor", MoshiProcessor);

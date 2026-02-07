@@ -3,6 +3,7 @@ from .personaplex_nodes import (
     PersonaPlexInference, 
     PersonaPlexConversationServer, 
     PersonaPlexSettings,
+    PersonaPlexServerURL,
     PERSONAPLEX_AVAILABLE
 )
 
@@ -11,6 +12,7 @@ NODE_CLASS_MAPPINGS = {
     "PersonaPlexInference": PersonaPlexInference,
     "PersonaPlexConversationServer": PersonaPlexConversationServer,
     "PersonaPlexSettings": PersonaPlexSettings,
+    "PersonaPlexServerURL": PersonaPlexServerURL,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -18,6 +20,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PersonaPlexInference": "PersonaPlex Inference",
     "PersonaPlexConversationServer": "PersonaPlex Conversation Server",
     "PersonaPlexSettings": "PersonaPlex Settings",
+    "PersonaPlexServerURL": "PersonaPlex Server URL",
 }
 
 WEB_DIRECTORY = None
