@@ -3,13 +3,15 @@
 A ComfyUI custom node for running [NVIDIA PersonaPlex](https://github.com/NVIDIA/personaplex) - a real-time, full-duplex speech-to-speech conversational AI with persona control.
 
 [![GitHub](https://img.shields.io/badge/GitHub-squarewulf-blue?logo=github)](https://github.com/squarewulf/ComfyUI_PersonaPlexMF)
-[![Version](https://img.shields.io/badge/version-1.1.0-green)](https://github.com/squarewulf/ComfyUI_PersonaPlexMF)
+[![Version](https://img.shields.io/badge/version-1.3.0-green)](https://github.com/squarewulf/ComfyUI_PersonaPlexMF)
 
 ## Features
 
 - **Live Conversation** — Real-time voice chat with AI using your microphone
 - **Batch Inference** — Process audio files through the PersonaPlex model
 - **Voice Presets** — 18 different voice options (natural and variety styles)
+- **Zero-Shot Voice Cloning** — Clone any voice from a 3-10 second audio sample
+- **Quantization Support** — Run on 8-16GB VRAM GPUs with 8-bit or 4-bit quantization
 - **Persona Control** — Customize AI behavior with text prompts
 - **Full Settings Control** — Adjust sampling, temperature, and timing parameters
 - **Smart Server Startup** — Browser opens only after server is fully ready
@@ -90,6 +92,7 @@ Starts a WebSocket server with a web UI for live voice conversation.
 | `port` | int | Server port (default: 8998) |
 | `device` | dropdown | cuda or cpu |
 | `cpu_offload` | bool | Enable for low VRAM GPUs |
+| `quantize` | dropdown | Quantization level (see Model Loader) |
 | `open_browser` | bool | Auto-open browser (waits for server ready) |
 | `settings` | optional | Connect PersonaPlex Settings node |
 
@@ -107,8 +110,30 @@ Loads PersonaPlex models for batch inference.
 | `tokenizer` | dropdown | Text tokenizer file |
 | `device` | dropdown | cuda or cpu |
 | `cpu_offload` | bool | Enable for low VRAM GPUs |
+| `quantize` | dropdown | Quantization level (see below) |
 
 **Output:** `personaplex_model` — Model bundle for inference
+
+**Quantization Options:**
+| Option | VRAM Required | Quality | Notes |
+|--------|---------------|---------|-------|
+| `none` | ~14GB | Best | Full precision (default) |
+| `8bit` | ~8-10GB | Good | 8-bit quantization |
+| `4bit` | ~5-7GB | Acceptable | 4-bit NF4 quantization |
+
+**Quantization:**
+
+Quantization works out of the box - no additional packages needed! Uses PyTorch native dynamic quantization.
+
+**VRAM Requirements:**
+- `none` (full precision): ~14GB VRAM
+- `8bit`: ~8-10GB VRAM
+- `4bit`: ~5-7GB VRAM
+
+**Important Notes:**
+- Works on Windows and Linux with zero dependencies
+- Quantization and `cpu_offload` cannot be used together
+- If you have 24GB+ VRAM (e.g., RTX 3090/4090), use `none` for best quality
 
 ### PersonaPlex Inference
 
@@ -120,12 +145,16 @@ Runs speech-to-speech inference on audio input.
 | `personaplex_model` | model | From Model Loader |
 | `audio` | AUDIO | Input audio |
 | `settings` | optional | Connect PersonaPlex Settings node |
-| `voice_preset` | dropdown | Voice to use |
+| `voice_audio` | AUDIO | Optional: Audio sample for voice cloning (3-10s) |
+| `voice_preset` | dropdown | Voice to use (ignored if voice_audio connected) |
 | `text_prompt` | string | Persona/behavior prompt |
 
 **Outputs:** 
 - `audio` — Generated speech response
 - `text_output` — Transcription of response
+
+**Voice Cloning:**
+To clone any voice, connect an audio sample (3-10 seconds of clear speech) to the `voice_audio` input. This overrides the voice preset and generates responses in the cloned voice.
 
 ### PersonaPlex Settings
 
@@ -235,7 +264,28 @@ pip install -e personaplex_src/moshi
 - Ensure sphn version is < 0.2 (see above)
 - Wait for "Server is ready!" message before connecting
 
+### Quantization
+Quantization uses PyTorch native and should work automatically. At startup you'll see:
+```
+[PersonaPlex] Quantization available (backend: pytorch_native)
+```
+
+**Note:** If you have 24GB+ VRAM (RTX 3090/4090), you don't need quantization - use `none` for best quality.
+
 ## Changelog
+
+### v1.3.0
+- Added 8-bit and 4-bit quantization support for low VRAM GPUs
+- New `quantize` option in both Model Loader and Conversation Server
+- Run on GPUs with 8-16GB VRAM instead of 24GB+
+- Graceful fallback to full precision if bitsandbytes fails
+- Improved Windows compatibility with better error messages
+- Requires bitsandbytes (optional, Linux recommended)
+
+### v1.2.0
+- Added zero-shot voice cloning from any audio sample
+- New `voice_audio` input on PersonaPlexInference node
+- Connect any audio (3-10 seconds recommended) to clone that voice
 
 ### v1.1.0
 - Fixed server startup and WebSocket connection stability

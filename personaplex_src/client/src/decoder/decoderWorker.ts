@@ -53,12 +53,22 @@ const createWorkerWithErrorTracking = (): Worker => {
 
 // Send init command to a worker, then send warmup BOS page
 const sendInitCommand = (worker: Worker, audioContextSampleRate: number): void => {
+  // Get audio settings from global config (set by Queue.tsx from server defaults)
+  const audioSettings = (window as any).audioSettings || {};
+  const decoderBufferSamples = audioSettings.decBuf || 3840;
+  const resampleQuality = audioSettings.resampleQ || 5;
+  
+  // Calculate buffer length in output sample rate
+  const bufferLength = decoderBufferSamples * audioContextSampleRate / 24000;
+  
+  console.log(`Decoder init: buffer=${decoderBufferSamples} samples, resampleQ=${resampleQuality}`);
+  
   worker.postMessage({
     command: "init",
-    bufferLength: 960 * audioContextSampleRate / 24000,
+    bufferLength: bufferLength,
     decoderSampleRate: 24000,
     outputBufferSampleRate: audioContextSampleRate,
-    resampleQuality: 0,
+    resampleQuality: resampleQuality,
   });
   
   // After a short delay, send warmup BOS page to trigger decoder's internal init

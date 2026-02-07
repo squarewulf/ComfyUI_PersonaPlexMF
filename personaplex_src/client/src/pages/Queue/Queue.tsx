@@ -41,6 +41,26 @@ interface HomepageProps {
   setTextPrompt: (value: string) => void;
   voicePrompt: string;
   setVoicePrompt: (value: string) => void;
+  // Sampling params
+  textTemperature: number;
+  setTextTemperature: (value: number) => void;
+  audioTemperature: number;
+  setAudioTemperature: (value: number) => void;
+  textTopk: number;
+  setTextTopk: (value: number) => void;
+  // Audio buffer params
+  initBufferMs: number;
+  setInitBufferMs: (value: number) => void;
+  partialBufferMs: number;
+  setPartialBufferMs: (value: number) => void;
+  decoderBufferSamples: number;
+  setDecoderBufferSamples: (value: number) => void;
+  resampleQuality: number;
+  setResampleQuality: (value: number) => void;
+  silenceDelayS: number;
+  setSilenceDelayS: (value: number) => void;
+  // Reset
+  resetParams: () => void;
 }
 
 const Homepage = ({
@@ -50,6 +70,23 @@ const Homepage = ({
   setTextPrompt,
   voicePrompt,
   setVoicePrompt,
+  textTemperature,
+  setTextTemperature,
+  audioTemperature,
+  setAudioTemperature,
+  textTopk,
+  setTextTopk,
+  initBufferMs,
+  setInitBufferMs,
+  partialBufferMs,
+  setPartialBufferMs,
+  decoderBufferSamples,
+  setDecoderBufferSamples,
+  resampleQuality,
+  setResampleQuality,
+  silenceDelayS,
+  setSilenceDelayS,
+  resetParams,
 }: HomepageProps) => {
   return (
     <div className="text-center h-screen w-screen p-4 flex flex-col items-center pt-8">
@@ -115,6 +152,192 @@ const Homepage = ({
           </select>
       </div>
 
+        {/* Settings Panel */}
+        <div className="w-full border border-gray-300 rounded p-4 bg-gray-50">
+          <h3 className="text-lg font-medium text-gray-800 mb-4">Settings</h3>
+          <div className="grid grid-cols-2 gap-4">
+            {/* Text Temperature */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Text temperature</label>
+              <input
+                type="range"
+                min="0.1"
+                max="1.5"
+                step="0.05"
+                value={textTemperature}
+                onChange={(e) => setTextTemperature(parseFloat(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="0.1"
+                max="1.5"
+                step="0.05"
+                value={textTemperature}
+                onChange={(e) => setTextTemperature(parseFloat(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Audio Temperature */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Audio temperature</label>
+              <input
+                type="range"
+                min="0.1"
+                max="1.5"
+                step="0.05"
+                value={audioTemperature}
+                onChange={(e) => setAudioTemperature(parseFloat(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="0.1"
+                max="1.5"
+                step="0.05"
+                value={audioTemperature}
+                onChange={(e) => setAudioTemperature(parseFloat(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Top-k */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Top-k</label>
+              <input
+                type="range"
+                min="1"
+                max="500"
+                step="1"
+                value={textTopk}
+                onChange={(e) => setTextTopk(parseInt(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="1"
+                max="500"
+                value={textTopk}
+                onChange={(e) => setTextTopk(parseInt(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Init buffer */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Init buffer (ms)</label>
+              <input
+                type="range"
+                min="50"
+                max="1000"
+                step="10"
+                value={initBufferMs}
+                onChange={(e) => setInitBufferMs(parseInt(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="50"
+                max="1000"
+                value={initBufferMs}
+                onChange={(e) => setInitBufferMs(parseInt(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Partial buffer */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Partial buffer (ms)</label>
+              <input
+                type="range"
+                min="50"
+                max="500"
+                step="10"
+                value={partialBufferMs}
+                onChange={(e) => setPartialBufferMs(parseInt(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="50"
+                max="500"
+                value={partialBufferMs}
+                onChange={(e) => setPartialBufferMs(parseInt(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Decoder buffer */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Decoder buffer (samples @24k)</label>
+              <input
+                type="range"
+                min="480"
+                max="9600"
+                step="480"
+                value={decoderBufferSamples}
+                onChange={(e) => setDecoderBufferSamples(parseInt(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="480"
+                max="9600"
+                value={decoderBufferSamples}
+                onChange={(e) => setDecoderBufferSamples(parseInt(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Resample quality */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Resample quality</label>
+              <input
+                type="range"
+                min="0"
+                max="10"
+                step="1"
+                value={resampleQuality}
+                onChange={(e) => setResampleQuality(parseInt(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="0"
+                max="10"
+                value={resampleQuality}
+                onChange={(e) => setResampleQuality(parseInt(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+            {/* Silence delay */}
+            <div className="flex items-center gap-2">
+              <label className="text-sm text-gray-600 w-24">Silence delay (s)</label>
+              <input
+                type="range"
+                min="0.01"
+                max="0.5"
+                step="0.01"
+                value={silenceDelayS}
+                onChange={(e) => setSilenceDelayS(parseFloat(e.target.value))}
+                className="flex-grow"
+              />
+              <input
+                type="number"
+                min="0.01"
+                max="0.5"
+                step="0.01"
+                value={silenceDelayS}
+                onChange={(e) => setSilenceDelayS(parseFloat(e.target.value))}
+                className="w-16 p-1 text-sm border rounded"
+              />
+            </div>
+          </div>
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={resetParams}
+              className="px-4 py-2 text-sm bg-gray-200 hover:bg-gray-300 text-gray-700 rounded border border-gray-300"
+            >
+              Set Defaults
+            </button>
+          </div>
+        </div>
+
         {showMicrophoneAccessMessage && (
           <p className="text-center text-red-500">Please enable your microphone before proceeding</p>
         )}
@@ -135,6 +358,65 @@ export const Queue:FC = () => {
 
   const audioContext = useRef<AudioContext | null>(null);
   const worklet = useRef<AudioWorkletNode | null>(null);
+  
+  // Fetch server defaults on mount
+  useEffect(() => {
+    const fetchDefaults = async () => {
+      try {
+        const response = await fetch('/api/defaults');
+        if (response.ok) {
+          const defaults = await response.json();
+          console.log('Loaded server defaults:', defaults);
+          if (defaults.voicePrompt) {
+            modelParams.setVoicePrompt(defaults.voicePrompt);
+          }
+          if (defaults.textPrompt) {
+            modelParams.setTextPrompt(defaults.textPrompt);
+          }
+          if (defaults.textTemperature !== undefined) {
+            modelParams.setTextTemperature(defaults.textTemperature);
+          }
+          if (defaults.audioTemperature !== undefined) {
+            modelParams.setAudioTemperature(defaults.audioTemperature);
+          }
+          if (defaults.textTopk !== undefined) {
+            modelParams.setTextTopk(defaults.textTopk);
+          }
+          if (defaults.audioTopk !== undefined) {
+            modelParams.setAudioTopk(defaults.audioTopk);
+          }
+          // Audio buffer settings
+          if (defaults.initBufferMs !== undefined) {
+            modelParams.setInitBufferMs(defaults.initBufferMs);
+          }
+          if (defaults.partialBufferMs !== undefined) {
+            modelParams.setPartialBufferMs(defaults.partialBufferMs);
+          }
+          if (defaults.decoderBufferSamples !== undefined) {
+            modelParams.setDecoderBufferSamples(defaults.decoderBufferSamples);
+          }
+          if (defaults.resampleQuality !== undefined) {
+            modelParams.setResampleQuality(defaults.resampleQuality);
+          }
+          if (defaults.silenceDelayS !== undefined) {
+            modelParams.setSilenceDelayS(defaults.silenceDelayS);
+          }
+          // Set audio buffer settings globally for decoder/processor
+          (window as any).audioSettings = {
+            initBuf: defaults.initBufferMs || 400,
+            partialBuf: defaults.partialBufferMs || 210,
+            decBuf: defaults.decoderBufferSamples || 3840,
+            resampleQ: defaults.resampleQuality || 5,
+            silenceDelay: defaults.silenceDelayS || 0.07,
+          };
+          console.log('Audio settings applied:', (window as any).audioSettings);
+        }
+      } catch (e) {
+        console.log('Could not fetch server defaults, using client defaults');
+      }
+    };
+    fetchDefaults();
+  }, []);  // Only run once on mount
   
   // enable eruda in development
   useEffect(() => {
@@ -180,6 +462,14 @@ export const Queue:FC = () => {
       worklet.current = new AudioWorkletNode(ctx, 'moshi-processor');
     }
     worklet.current.connect(ctx.destination);
+    
+    // Send buffer config to worklet from global audio settings
+    const audioSettings = (window as any).audioSettings || {};
+    worklet.current.port.postMessage({
+      type: 'config',
+      initBufferMs: audioSettings.initBuf || 400,
+      partialBufferMs: audioSettings.partialBuf || 210,
+    });
   }, [audioContext, worklet]);
 
   const startConnection = useCallback(async() => {
@@ -209,6 +499,23 @@ export const Queue:FC = () => {
           setTextPrompt={modelParams.setTextPrompt}
           voicePrompt={modelParams.voicePrompt}
           setVoicePrompt={modelParams.setVoicePrompt}
+          textTemperature={modelParams.textTemperature}
+          setTextTemperature={modelParams.setTextTemperature}
+          audioTemperature={modelParams.audioTemperature}
+          setAudioTemperature={modelParams.setAudioTemperature}
+          textTopk={modelParams.textTopk}
+          setTextTopk={modelParams.setTextTopk}
+          initBufferMs={modelParams.initBufferMs}
+          setInitBufferMs={modelParams.setInitBufferMs}
+          partialBufferMs={modelParams.partialBufferMs}
+          setPartialBufferMs={modelParams.setPartialBufferMs}
+          decoderBufferSamples={modelParams.decoderBufferSamples}
+          setDecoderBufferSamples={modelParams.setDecoderBufferSamples}
+          resampleQuality={modelParams.resampleQuality}
+          setResampleQuality={modelParams.setResampleQuality}
+          silenceDelayS={modelParams.silenceDelayS}
+          setSilenceDelayS={modelParams.setSilenceDelayS}
+          resetParams={modelParams.resetParams}
         />
       )}
     </>

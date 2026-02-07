@@ -21,3 +21,8 @@ aiohttp>=3.9
 
 # CPU offload support (optional, for low VRAM)
 accelerate>=0.26.0
+
+# Voice cloning support
+scipy>=1.10.0
+
+# Note: Quantization uses PyTorch native - no additional packages needed!

@@ -96,7 +96,9 @@ class ServerState:
 
     def __init__(self, mimi: MimiModel, other_mimi: MimiModel, text_tokenizer: sentencepiece.SentencePieceProcessor,
                  lm: LMModel, device: str | torch.device, voice_prompt_dir: str | None = None,
-                 save_voice_prompt_embeddings: bool = False):
+                 save_voice_prompt_embeddings: bool = False,
+                 use_sampling: bool = True, temp_audio: float = 0.8, temp_text: float = 0.7,
+                 topk_audio: int = 250, topk_text: int = 25):
         self.mimi = mimi
         self.other_mimi = other_mimi
         self.text_tokenizer = text_tokenizer
@@ -109,6 +111,11 @@ class ServerState:
                             device=device,
                             frame_rate=self.mimi.frame_rate,
                             save_voice_prompt_embeddings=save_voice_prompt_embeddings,
+                            use_sampling=use_sampling,
+                            temp=temp_audio,
+                            temp_text=temp_text,
+                            top_k=topk_audio,
+                            top_k_text=topk_text,
         )
         
         self.lock = asyncio.Lock()
@@ -203,6 +210,9 @@ class ServerState:
 
         async def opus_loop():
             all_pcm_data = None
+            # Max buffer: 1 second of audio at sample_rate (prevents latency climbing)
+            max_buffer_samples = self.mimi.sample_rate
+            last_drop_log = 0
 
             while True:
                 if close:
@@ -215,6 +225,16 @@ class ServerState:
                     all_pcm_data = pcm
                 else:
                     all_pcm_data = np.concatenate((all_pcm_data, pcm))
+                
+                # Drop old audio if buffer exceeds max (prevents latency climbing)
+                if all_pcm_data.shape[-1] > max_buffer_samples:
+                    excess = all_pcm_data.shape[-1] - self.frame_size  # Keep one frame
+                    all_pcm_data = all_pcm_data[excess:]
+                    now = time.time()
+                    if now - last_drop_log > 5:  # Log at most every 5 seconds
+                        clog.log("warning", f"Dropping {excess / self.mimi.sample_rate:.1f}s of audio to prevent latency buildup")
+                        last_drop_log = now
+                
                 while all_pcm_data.shape[-1] >= self.frame_size:
                     be = time.time()
                     chunk = all_pcm_data[: self.frame_size]
@@ -390,6 +410,37 @@ def main():
             "that contains valid key.pem and cert.pem files"
         )
     )
+    
+    # Sampling parameters
+    parser.add_argument("--temp-audio", type=float, default=0.8,
+                        help="Audio sampling temperature. Higher = more random. (default: 0.8)")
+    parser.add_argument("--temp-text", type=float, default=0.7,
+                        help="Text sampling temperature. Higher = more random. (default: 0.7)")
+    parser.add_argument("--topk-audio", type=int, default=250,
+                        help="Top-K sampling for audio tokens. (default: 250)")
+    parser.add_argument("--topk-text", type=int, default=25,
+                        help="Top-K sampling for text tokens. (default: 25)")
+    parser.add_argument("--no-sampling", action="store_true",
+                        help="Disable sampling and use greedy decoding instead.")
+    
+    # Default voice and text prompt (passed to web UI)
+    parser.add_argument("--default-voice", type=str, default="NATF0.pt",
+                        help="Default voice preset for the web UI. (default: NATF0.pt)")
+    parser.add_argument("--default-text-prompt", type=str, 
+                        default="You are a wise and friendly teacher. Answer questions or provide advice in a clear and engaging way.",
+                        help="Default text prompt for the web UI.")
+    
+    # Audio buffer settings (client-side, affects latency)
+    parser.add_argument("--init-buffer-ms", type=int, default=400,
+                        help="Initial buffer before audio playback starts (ms). Higher = more stable, higher latency.")
+    parser.add_argument("--partial-buffer-ms", type=int, default=210,
+                        help="Partial buffer size (ms). Lower = less latency but may cause choppy audio.")
+    parser.add_argument("--decoder-buffer-samples", type=int, default=3840,
+                        help="Decoder buffer size in samples @24kHz. Default 3840 = 160ms.")
+    parser.add_argument("--resample-quality", type=int, default=5,
+                        help="Resampling quality (0=fast, 10=best). Higher = better audio but more CPU.")
+    parser.add_argument("--silence-delay-s", type=float, default=0.07,
+                        help="Silence detection delay in seconds.")
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -453,11 +504,48 @@ def main():
         device=args.device,
         voice_prompt_dir=args.voice_prompt_dir,
         save_voice_prompt_embeddings=False,
+        use_sampling=not args.no_sampling,
+        temp_audio=args.temp_audio,
+        temp_text=args.temp_text,
+        topk_audio=args.topk_audio,
+        topk_text=args.topk_text,
     )
+    
+    # Log sampling settings
+    if args.no_sampling:
+        logger.info("Sampling: disabled (greedy decoding)")
+    else:
+        logger.info(f"Sampling: temp_audio={args.temp_audio}, temp_text={args.temp_text}, topk_audio={args.topk_audio}, topk_text={args.topk_text}")
+    
     logger.info("warming up the model")
     state.warmup()
+    
+    # Create defaults response for the web UI
+    defaults_config = {
+        "voicePrompt": args.default_voice,
+        "textPrompt": args.default_text_prompt,
+        "textTemperature": args.temp_text,
+        "audioTemperature": args.temp_audio,
+        "textTopk": args.topk_text,
+        "audioTopk": args.topk_audio,
+        "randomSeed": -1,
+        # Audio buffer settings (client-side)
+        "initBufferMs": args.init_buffer_ms,
+        "partialBufferMs": args.partial_buffer_ms,
+        "decoderBufferSamples": args.decoder_buffer_samples,
+        "resampleQuality": args.resample_quality,
+        "silenceDelayS": args.silence_delay_s,
+    }
+    logger.info(f"Web UI defaults: voice={args.default_voice}, temp_audio={args.temp_audio}, temp_text={args.temp_text}")
+    logger.info(f"Audio buffers: init={args.init_buffer_ms}ms, partial={args.partial_buffer_ms}ms")
+    
+    async def handle_defaults(_):
+        """Return default configuration for the web UI."""
+        return web.json_response(defaults_config)
+    
     app = web.Application()
     app.router.add_get("/api/chat", state.handle_chat)
+    app.router.add_get("/api/defaults", handle_defaults)
     if static_path is not None:
         async def handle_root(_):
             return web.FileResponse(os.path.join(static_path, "index.html"))
@@ -471,16 +559,10 @@ def main():
     ssl_context = None
     if args.ssl is not None:
         ssl_context, protocol = create_ssl_context(args.ssl)
-    # Show localhost for local access (don't expose LAN IP in logs)
-    display_host = "localhost" if args.host in ("0.0.0.0", "::", "localhost", "127.0.0.1") else args.host
-    logger.info(f"Access the Web UI directly at {protocol}://{display_host}:{args.port}")
+    host_ip = args.host if args.host not in ("0.0.0.0", "::", "localhost") else get_lan_ip()
+    logger.info(f"Access the Web UI directly at {protocol}://{host_ip}:{args.port}")
     if setup_tunnel is not None:
-        try:
-            # Try newer gradio API (requires share_server_tls_certificate)
-            tunnel = setup_tunnel('localhost', args.port, tunnel_token, None, None)
-        except TypeError:
-            # Fall back to older gradio API
-            tunnel = setup_tunnel('localhost', args.port, tunnel_token, None)
+        tunnel = setup_tunnel('localhost', args.port, tunnel_token, None)
         logger.info(f"Tunnel started, if executing on a remote GPU, you can use {tunnel}.")
     web.run_app(app, port=args.port, ssl_context=ssl_context)
 

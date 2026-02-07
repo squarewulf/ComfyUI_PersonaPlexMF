@@ -4,6 +4,7 @@ from .personaplex_nodes import (
     PersonaPlexConversationServer, 
     PersonaPlexStopServer,
     PersonaPlexSettings,
+    PersonaPlexExternal,
     PERSONAPLEX_AVAILABLE,
     __version__,
 )
@@ -14,6 +15,7 @@ NODE_CLASS_MAPPINGS = {
     "PersonaPlexConversationServer": PersonaPlexConversationServer,
     "PersonaPlexStopServer": PersonaPlexStopServer,
     "PersonaPlexSettings": PersonaPlexSettings,
+    "PersonaPlexExternal": PersonaPlexExternal,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
@@ -22,6 +24,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "PersonaPlexConversationServer": "PersonaPlex Conversation Server",
     "PersonaPlexStopServer": "PersonaPlex Stop Server",
     "PersonaPlexSettings": "PersonaPlex Settings",
+    "PersonaPlexExternal": "PersonaPlex External",
 }
 
 WEB_DIRECTORY = None

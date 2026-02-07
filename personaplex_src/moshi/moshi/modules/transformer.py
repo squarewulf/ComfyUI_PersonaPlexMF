@@ -511,7 +511,7 @@ class StreamingTransformerLayer(StreamingModule[_LayerState]):
                 **attn_kwargs,  # type: ignore
                 **factory_kwargs,  # type: ignore
             )  # type: ignore
-            self.norm1 = create_norm_fn(norm, d_model, **factory_kwargs)
+        self.norm1 = create_norm_fn(norm, d_model, **factory_kwargs)
         self.norm2 = create_norm_fn(norm, d_model, **factory_kwargs)
         # Redefine feedforward layers to expose bias parameter
         self.weights_per_step = weights_per_step

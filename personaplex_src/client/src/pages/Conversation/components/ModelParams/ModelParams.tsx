@@ -21,6 +21,11 @@ export const ModelParams:FC<ModelParamsProps> = ({
   voicePrompt,
   randomSeed,
   modal,
+  initBufferMs,
+  partialBufferMs,
+  decoderBufferSamples,
+  resampleQuality,
+  silenceDelayS,
 }) => {
   const [modalVoicePrompt, setModalVoicePrompt] = useState<string>(voicePrompt);
   const [modalTextPrompt, setModalTextPrompt] = useState<string>(textPrompt);
@@ -76,6 +81,11 @@ export const ModelParams:FC<ModelParamsProps> = ({
             textPrompt: modalTextPrompt,
             voicePrompt: modalVoicePrompt,
             randomSeed,
+            initBufferMs,
+            partialBufferMs,
+            decoderBufferSamples,
+            resampleQuality,
+            silenceDelayS,
           });
           modal?.current?.close()
         }} className="m-2">Validate</Button>
