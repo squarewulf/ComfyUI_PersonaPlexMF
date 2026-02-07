@@ -60,6 +60,70 @@ PERSONAPLEX_MODELS_DIR = os.path.join(folder_paths.models_dir, "personaplex")
 os.makedirs(PERSONAPLEX_MODELS_DIR, exist_ok=True)
 
 
+HF_REPO = "nvidia/personaplex-7b-v1"
+
+# Expected model filenames (must match loaders.py constants)
+MOSHI_FILENAME = "model.safetensors"
+MIMI_FILENAME = "tokenizer-e351c8d8-checkpoint125.safetensors"
+TOKENIZER_FILENAME = "tokenizer_spm_32k_3.model"
+
+
+def _hf_download(filename: str, dest_dir: str) -> str:
+    """Download a file from the HuggingFace repo to dest_dir. Returns local path."""
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError as e:
+        raise RuntimeError(
+            "huggingface-hub is required to auto-download models. "
+            "Install it with: pip install huggingface-hub"
+        ) from e
+    try:
+        cached_path = hf_hub_download(HF_REPO, filename)
+    except Exception as e:
+        raise RuntimeError(
+            f"Failed to download {filename} from {HF_REPO}. "
+            "Make sure you accepted the model license on HuggingFace and are logged in. "
+            "Run: huggingface-cli login"
+        ) from e
+    # Copy from HF cache to our models directory so it shows up in the node dropdown
+    import shutil
+    dest_path = os.path.join(dest_dir, filename)
+    if not os.path.exists(dest_path):
+        print(f"[PersonaPlex] Copying {filename} to {dest_dir}")
+        shutil.copy2(cached_path, dest_path)
+    return dest_path
+
+
+def ensure_models(models_dir: str, auto_download: bool):
+    """Ensure all required model files exist, downloading from HuggingFace if needed."""
+    needed = {
+        "Moshi LM": MOSHI_FILENAME,
+        "Mimi codec": MIMI_FILENAME,
+        "Text tokenizer": TOKENIZER_FILENAME,
+    }
+    missing = []
+    for label, filename in needed.items():
+        path = os.path.join(models_dir, filename)
+        if not os.path.exists(path):
+            missing.append((label, filename))
+    
+    if not missing:
+        return  # All models present
+    
+    if not auto_download:
+        names = ", ".join(f"{label} ({fn})" for label, fn in missing)
+        raise FileNotFoundError(
+            f"Missing models: {names}. "
+            f"Place them in {models_dir} or enable auto_download_models."
+        )
+    
+    print(f"[PersonaPlex] {len(missing)} model file(s) missing, downloading from HuggingFace ({HF_REPO})...")
+    for label, filename in missing:
+        print(f"[PersonaPlex] Downloading {label} ({filename})...")
+        _hf_download(filename, models_dir)
+    print("[PersonaPlex] All models downloaded successfully!")
+
+
 def ensure_voice_prompts(voices_dir: str, auto_download: bool):
     if os.path.exists(voices_dir):
         if any(name.endswith(".pt") for name in os.listdir(voices_dir)):
@@ -230,6 +294,7 @@ class PersonaPlexModelLoader:
                 "tokenizer": (tokenizer_files, {"default": tokenizer_files[0] if tokenizer_files else "tokenizer_spm_32k_3.model"}),
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "cpu_offload": ("BOOLEAN", {"default": False}),
+                "auto_download_models": ("BOOLEAN", {"default": True}),
                 "auto_download_voices": ("BOOLEAN", {"default": True}),
             },
         }
@@ -239,9 +304,12 @@ class PersonaPlexModelLoader:
     FUNCTION = "load_model"
     CATEGORY = "audio/PersonaPlex"
 
-    def load_model(self, moshi_model, mimi_model, tokenizer, device, cpu_offload, auto_download_voices=True):
+    def load_model(self, moshi_model, mimi_model, tokenizer, device, cpu_offload, auto_download_models=True, auto_download_voices=True):
         if not PERSONAPLEX_AVAILABLE:
             raise RuntimeError(f"PersonaPlex not available: {IMPORT_ERROR}")
+        
+        # Auto-download models if missing
+        ensure_models(PERSONAPLEX_MODELS_DIR, auto_download_models)
         
         moshi_path = os.path.join(PERSONAPLEX_MODELS_DIR, moshi_model)
         mimi_path = os.path.join(PERSONAPLEX_MODELS_DIR, mimi_model)
@@ -509,6 +577,7 @@ class PersonaPlexConversationServer:
                 "device": (["cuda", "cpu"], {"default": "cuda"}),
                 "cpu_offload": ("BOOLEAN", {"default": False}),
                 "open_browser": ("BOOLEAN", {"default": True}),
+                "auto_download_models": ("BOOLEAN", {"default": True}),
                 "auto_download_voices": ("BOOLEAN", {"default": True}),
             },
             "optional": {
@@ -521,7 +590,7 @@ class PersonaPlexConversationServer:
     FUNCTION = "start_server"
     CATEGORY = "audio/PersonaPlex"
 
-    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, open_browser, auto_download_voices, settings=None):
+    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, open_browser, auto_download_models, auto_download_voices, settings=None):
         if not PERSONAPLEX_AVAILABLE:
             raise RuntimeError(f"PersonaPlex not available: {IMPORT_ERROR}")
         
@@ -529,6 +598,9 @@ class PersonaPlexConversationServer:
         import webbrowser
         import threading
         import time
+        
+        # Auto-download models if missing
+        ensure_models(PERSONAPLEX_MODELS_DIR, auto_download_models)
         
         # Extract settings
         host = "0.0.0.0"
