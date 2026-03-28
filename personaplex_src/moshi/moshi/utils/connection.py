@@ -141,10 +141,66 @@ def ensure_mkcert_ca(mkcert_bin: str):
     _run_command([mkcert_bin, "-install"])
 
 
+def _create_self_signed_cert(cert_file: Path, key_file: Path):
+    """Fallback: generate a self-signed certificate using Python's ssl/cryptography libs."""
+    try:
+        from cryptography import x509
+        from cryptography.x509.oid import NameOID
+        from cryptography.hazmat.primitives import hashes, serialization
+        from cryptography.hazmat.primitives.asymmetric import rsa
+        import datetime
+        import ipaddress
+
+        lan_ip = get_lan_ip()
+        logger.info(f"[auto-cert] Generating self-signed certificate for localhost and {lan_ip}...")
+
+        key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        subject = issuer = x509.Name([
+            x509.NameAttribute(NameOID.COMMON_NAME, "PersonaPlex Self-Signed"),
+        ])
+        san_list = [
+            x509.DNSName("localhost"),
+            x509.IPAddress(ipaddress.IPv4Address("127.0.0.1")),
+            x509.IPAddress(ipaddress.IPv6Address("::1")),
+        ]
+        try:
+            san_list.append(x509.IPAddress(ipaddress.ip_address(lan_ip)))
+        except ValueError:
+            san_list.append(x509.DNSName(lan_ip))
+
+        cert = (
+            x509.CertificateBuilder()
+            .subject_name(subject)
+            .issuer_name(issuer)
+            .public_key(key.public_key())
+            .serial_number(x509.random_serial_number())
+            .not_valid_before(datetime.datetime.now(datetime.timezone.utc))
+            .not_valid_after(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=365))
+            .add_extension(x509.SubjectAlternativeName(san_list), critical=False)
+            .sign(key, hashes.SHA256())
+        )
+
+        key_file.write_bytes(key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.TraditionalOpenSSL,
+            serialization.NoEncryption(),
+        ))
+        cert_file.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+        logger.info("[auto-cert] Self-signed certificate generated.")
+        return cert_file, key_file
+    except ImportError:
+        logger.warning("[auto-cert] 'cryptography' package not installed, cannot generate self-signed cert.")
+        return None, None
+    except Exception as e:
+        logger.warning(f"[auto-cert] Self-signed cert generation failed: {e}")
+        return None, None
+
+
 def create_cert_if_needed(cert_dir: str):
     """
     Create cert.pem and key.pem using mkcert if they don't already exist.
-    Returns (cert_file, key_file) or (None, None) if mkcert unavailable.
+    Falls back to a Python-generated self-signed certificate if mkcert is unavailable.
+    Returns (cert_file, key_file) or (None, None) if all methods fail.
 
     Parameters
     ----------
@@ -170,33 +226,33 @@ def create_cert_if_needed(cert_dir: str):
 
     mkcert_bin = ensure_mkcert()
 
-    if not mkcert_bin:
-        logger.warning("[auto-cert] mkcert not installed; falling back to HTTP.")
-        return None, None
+    if mkcert_bin:
+        logger.info("[auto-cert] mkcert detected. Ensuring local CA installed...")
+        ensure_mkcert_ca(mkcert_bin)
 
-    logger.info("[auto-cert] mkcert detected. Ensuring local CA installed...")
-    ensure_mkcert_ca(mkcert_bin)
+        # Create cert for localhost, loopback, and LAN IP
+        lan_ip = get_lan_ip()
+        logger.info(f"[auto-cert] Generating certificate for localhost and {lan_ip}...")
 
-    # Create cert for localhost, loopback, and LAN IP
-    lan_ip = get_lan_ip()
-    logger.info(f"[auto-cert] Generating certificate for localhost and {lan_ip}...")
+        success = _run_command([
+            mkcert_bin,
+            "-cert-file", str(cert_file),
+            "-key-file", str(key_file),
+            "localhost",
+            "127.0.0.1",
+            "::1",
+            lan_ip
+        ])
 
-    success = _run_command([
-        mkcert_bin,
-        "-cert-file", str(cert_file),
-        "-key-file", str(key_file),
-        "localhost",
-        "127.0.0.1",
-        "::1",
-        lan_ip
-    ])
+        if success:
+            logger.info("[auto-cert] Certificate generated via mkcert.")
+            return cert_file, key_file
+        else:
+            logger.warning("[auto-cert] mkcert cert generation failed, trying self-signed fallback...")
+    else:
+        logger.warning("[auto-cert] mkcert not available, trying self-signed fallback...")
 
-    if not success:
-        logger.warning("[auto-cert] mkcert failed. Using HTTP.")
-        return None, None
-
-    logger.info("[auto-cert] Certificate generated.")
-    return cert_file, key_file
+    return _create_self_signed_cert(cert_file, key_file)
 
 
 def create_ssl_context(cert_dir: str):

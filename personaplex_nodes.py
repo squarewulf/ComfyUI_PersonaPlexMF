@@ -582,6 +582,9 @@ class PersonaPlexConversationServer:
             },
             "optional": {
                 "settings": ("PERSONAPLEX_SETTINGS",),
+                "voice_clone_audio": ("AUDIO", {
+                    "tooltip": "Optional audio input for custom voice cloning. When connected, a 'Custom Voice' option will appear in the web UI."
+                }),
             },
         }
     
@@ -590,7 +593,7 @@ class PersonaPlexConversationServer:
     FUNCTION = "start_server"
     CATEGORY = "audio/PersonaPlex"
 
-    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, open_browser, auto_download_models, auto_download_voices, settings=None):
+    def start_server(self, moshi_model, mimi_model, tokenizer, port, device, cpu_offload, open_browser, auto_download_models, auto_download_voices, settings=None, voice_clone_audio=None):
         if not PERSONAPLEX_AVAILABLE:
             raise RuntimeError(f"PersonaPlex not available: {IMPORT_ERROR}")
         
@@ -624,6 +627,25 @@ class PersonaPlexConversationServer:
                 raise FileNotFoundError(f"{name} not found: {path}")
         
         ensure_voice_prompts(voices_dir, auto_download_voices)
+        
+        # Handle custom voice clone audio
+        custom_voice_path = None
+        if voice_clone_audio is not None:
+            import scipy.io.wavfile as wav
+            
+            waveform = voice_clone_audio["waveform"]
+            audio_sr = voice_clone_audio["sample_rate"]
+            
+            if waveform.dim() == 3:
+                waveform = waveform.squeeze(0)
+            if waveform.shape[0] > 1:
+                waveform = waveform.mean(dim=0, keepdim=True)
+            
+            audio_data = waveform.squeeze().cpu().numpy()
+            
+            custom_voice_path = os.path.join(voices_dir, "CUSTOM.wav")
+            wav.write(custom_voice_path, audio_sr, (audio_data * 32767).astype(np.int16))
+            print(f"[PersonaPlex] Saved custom voice clone audio to: {custom_voice_path}")
         
         if PersonaPlexConversationServer._server_process is not None:
             try:
@@ -668,6 +690,9 @@ class PersonaPlexConversationServer:
         
         if gradio_tunnel:
             server_args.append("--gradio-tunnel")
+        
+        if custom_voice_path is not None:
+            server_args.append("--custom-voice")
         
         # Create a wrapper script that forces our bundled moshi to load
         # This is needed because Windows embedded Python ignores PYTHONPATH in some cases

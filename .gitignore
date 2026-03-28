@@ -25,9 +25,21 @@ Thumbs.db
 venv/
 env/
 .env
+.env.local
+.env.*.local
+
+# Node (client)
+personaplex_src/client/node_modules/
+
+# Local / tooling
+.disabled
+.cursor/
 
 # Logs
 *.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
 
 # Model files (user must download separately)
 *.safetensors

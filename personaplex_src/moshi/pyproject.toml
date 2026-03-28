@@ -13,8 +13,8 @@ dependencies = [
     "torch >= 2.2.0, < 2.5",
     "aiohttp>=3.10.5, <3.11",
 ]
-authors = [{name="Rajarshi Roy", email="rajarshir@nvidia.com"}]
-maintainers = [{name="Rajarshi Roy", email="rajarshir@nvidia.com"}]
+authors = [{name="NVIDIA Corporation"}]
+maintainers = [{name="NVIDIA Corporation"}]
 license = {text = "MIT"}
 dynamic = ["version"]
 readme = "README.md"

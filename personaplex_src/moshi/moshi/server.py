@@ -464,6 +464,11 @@ def main():
             "that contains valid key.pem and cert.pem files"
         )
     )
+    parser.add_argument(
+        "--custom-voice",
+        action="store_true",
+        help="Indicates that a custom voice prompt (CUSTOM.wav) is available for voice cloning"
+    )
 
     args = parser.parse_args()
     args.voice_prompt_dir = _get_voice_prompt_dir(
@@ -532,6 +537,29 @@ def main():
     state.warmup()
     app = web.Application()
     app.router.add_get("/api/chat", state.handle_chat)
+    
+    # Build available voice options
+    voice_options = [
+        "NATF0.pt", "NATF1.pt", "NATF2.pt", "NATF3.pt",
+        "NATM0.pt", "NATM1.pt", "NATM2.pt", "NATM3.pt",
+        "VARF0.pt", "VARF1.pt", "VARF2.pt", "VARF3.pt", "VARF4.pt",
+        "VARM0.pt", "VARM1.pt", "VARM2.pt", "VARM3.pt", "VARM4.pt",
+    ]
+    has_custom_voice = args.custom_voice
+    if has_custom_voice:
+        voice_options.insert(0, "CUSTOM.wav")
+        logger.info("Custom voice cloning enabled - CUSTOM.wav available")
+    
+    async def handle_defaults(_):
+        defaults = {
+            "voiceOptions": voice_options,
+            "hasCustomVoice": has_custom_voice,
+        }
+        if has_custom_voice:
+            defaults["voicePrompt"] = "CUSTOM.wav"
+        return web.json_response(defaults)
+    
+    app.router.add_get("/api/defaults", handle_defaults)
     if static_path is not None:
         async def handle_root(_):
             return web.FileResponse(os.path.join(static_path, "index.html"))

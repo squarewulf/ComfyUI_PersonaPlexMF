@@ -10,6 +10,34 @@
     <link rel="stylesheet" crossorigin href="/assets/index-DKyCyN6n.css">
   </head>
   <body class="bg-[#0f0f0f] text-[#e8e8e8]">
-    <div id="root" />
+    <div id="root" />
+    <script>
+    (function() {
+      let customVoiceAdded = false;
+      fetch('/api/defaults').then(r => { if (!r.ok) throw new Error(); return r.json(); }).then(data => {
+        if (!data.hasCustomVoice) return;
+        localStorage.setItem('pp_voicePrompt', '"CUSTOM.wav"');
+        const addCustomVoice = () => {
+          if (customVoiceAdded) return false;
+          const voiceLabel = Array.from(document.querySelectorAll('span, label')).find(el =>
+            el.textContent.toLowerCase().includes('voice') && el.textContent.toLowerCase().includes('natural') === false
+          );
+          if (!voiceLabel) return false;
+          const section = voiceLabel.closest('.glass-card') || voiceLabel.closest('div')?.parentElement;
+          if (!section || document.getElementById('custom-voice-btn')) { customVoiceAdded = true; return true; }
+          const btn = document.createElement('button');
+          btn.id = 'custom-voice-btn';
+          btn.innerHTML = '<span style="font-size:16px">Custom Voice</span><br><span style="font-size:10px;opacity:0.7">(Voice Clone Active)</span>';
+          btn.style.cssText = 'width:100%;padding:12px;margin-top:12px;background:rgba(118,185,0,0.25);border:2px solid #76b900;color:#76b900;border-radius:8px;font-weight:bold;cursor:pointer;text-align:center;';
+          btn.onclick = () => { localStorage.setItem('pp_voicePrompt', '"CUSTOM.wav"'); };
+          section.appendChild(btn);
+          customVoiceAdded = true;
+          return true;
+        };
+        const poll = setInterval(() => { if (addCustomVoice()) clearInterval(poll); }, 500);
+        setTimeout(() => clearInterval(poll), 30000);
+      }).catch(() => {});
+    })();
+    </script>
   </body>
 </html>
